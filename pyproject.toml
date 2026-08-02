@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scenario-pipeliner"
+version = "0.1.0"
+description = "Plugin-based scenario migration planner and core DB migrator"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "scenario_pipeliner maintainers" },
+]
+license = "BSD-3-Clause"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+keywords = ["plugins", "migrations", "alembic", "worker", "pipeline"]
+dependencies = [
+    "aio-pika>=10.0.1",
+    "aiosqlite>=0.22.1",
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "httpx>=0.28.1",
+    "packaging>=24.2",
+    "pydantic>=2.11.0",
+    "sqlalchemy>=2.0.51",
+]
+
+[project.scripts]
+scenario_pipeliner = "scenario_pipeliner.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/demidos-snz/scenario_pipeliner"
+Documentation = "https://github.com/demidos-snz/scenario_pipeliner#readme"
+Issues = "https://github.com/demidos-snz/scenario_pipeliner/issues"
+Repository = "https://github.com/demidos-snz/scenario_pipeliner.git"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.0",
+    "pytest>=9.0.3",
+    "ruff>=0.15.12",
+    "twine>=6.2.0",
+]
+
+[tool.setuptools]
+package-dir = {scenario_pipeliner = "."}
+packages = [
+    "scenario_pipeliner",
+    "scenario_pipeliner.api",
+    "scenario_pipeliner.core",
+    "scenario_pipeliner.core_migrations",
+    "scenario_pipeliner.core_migrations.versions",
+    "scenario_pipeliner.track_documents",
+    "scenario_pipeliner.worker",
+    "scenario_pipeliner.worker.core",
+    "scenario_pipeliner.worker.core.custom_clients",
+    "scenario_pipeliner.worker.core.custom_settings",
+    "scenario_pipeliner.worker.execution",
+]
+
+[tool.setuptools.package-data]
+scenario_pipeliner = ["core_migrations/*.mako"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = [".."]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+src = [".."]
+exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",
+    "UP037",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+explicit_package_bases = false
+exclude = ["\\.venv/"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
