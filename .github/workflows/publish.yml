@@ -26,7 +26,7 @@ jobs:
       contents: read
     defaults:
       run:
-        working-directory: src/scenario_pipeliner
+        working-directory: ./
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,7 +35,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: src/scenario_pipeliner/uv.lock
+          cache-dependency-glob: ./uv.lock
 
       - name: Install dependencies
         run: uv sync --dev
@@ -56,7 +56,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scenario-pipeliner-dist
-          path: src/scenario_pipeliner/dist/*
+          path: ./dist/*
 
   publish_testpypi:
     name: publish to TestPyPI

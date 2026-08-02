@@ -11,14 +11,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: src/scenario_pipeliner
+        working-directory: ./
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: src/scenario_pipeliner/uv.lock
+          cache-dependency-glob: ./uv.lock
 
       - name: Install dependencies
         run: uv sync --dev
@@ -54,14 +54,14 @@ jobs:
           --health-retries 10
     defaults:
       run:
-        working-directory: src/scenario_pipeliner
+        working-directory: ./
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: src/scenario_pipeliner/uv.lock
+          cache-dependency-glob: ./uv.lock
 
       - name: Install dependencies
         run: uv sync --dev
@@ -149,7 +149,7 @@ jobs:
       - scenario_pipeliner_postgres_smoke
     defaults:
       run:
-        working-directory: src/scenario_pipeliner
+        working-directory: ./
     permissions:
       contents: read
     steps:
@@ -158,7 +158,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: src/scenario_pipeliner/uv.lock
+          cache-dependency-glob: ./uv.lock
 
       - name: Install dependencies
         run: uv sync --dev
@@ -173,12 +173,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scenario-pipeliner-dist
-          path: src/scenario_pipeliner/dist/*
+          path: ./dist/*
 
       - name: Publish to TestPyPI (manual + secret)
         if: ${{ github.event_name == 'workflow_dispatch' && secrets.TEST_PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: src/scenario_pipeliner/dist
+          packages-dir: ./dist
           repository-url: https://test.pypi.org/legacy/
           password: ${{ secrets.TEST_PYPI_API_TOKEN }}
