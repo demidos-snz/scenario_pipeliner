@@ -152,6 +152,7 @@ jobs:
         working-directory: ./
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -175,10 +176,10 @@ jobs:
           name: scenario-pipeliner-dist
           path: ./dist/*
 
-      - name: Publish to TestPyPI (manual + secret)
-        if: ${{ github.event_name == 'workflow_dispatch' && secrets.TEST_PYPI_API_TOKEN != '' }}
+      - name: Publish to TestPyPI (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: ./dist
           repository-url: https://test.pypi.org/legacy/
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          skip-existing: true
