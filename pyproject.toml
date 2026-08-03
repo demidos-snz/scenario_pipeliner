@@ -58,7 +58,6 @@ packages = [
     "scenario_pipeliner.core",
     "scenario_pipeliner.core_migrations",
     "scenario_pipeliner.core_migrations.versions",
-#    "scenario_pipeliner.track_documents",
     "scenario_pipeliner.worker",
     "scenario_pipeliner.worker.core",
     "scenario_pipeliner.worker.core.custom_clients",
