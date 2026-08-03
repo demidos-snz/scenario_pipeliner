@@ -46,7 +46,12 @@ Exit codes:
 ```python
 from pathlib import Path
 
-from scenario_pipeliner import DbBackend, Mode, ScenarioPipelinerConfig, apply_migrations
+from scenario_pipeliner import (
+    DbBackend,
+    Mode,
+    ScenarioPipelinerConfig,
+    apply_migrations,
+)
 
 config = ScenarioPipelinerConfig(
     mode=Mode.DEV,
