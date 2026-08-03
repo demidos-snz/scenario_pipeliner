@@ -40,11 +40,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-#      - name: Quality gates
-#        run: |
-#          uv run ruff check .
-#          uv run mypy .
-#          uv run pytest
+      - name: Quality gates
+        run: |
+          uv run ruff check .
+          uv run mypy .
+          uv run pytest
 
       - name: Build dist
         run: uv build

@@ -95,52 +95,6 @@ jobs:
       - name: Pytest worker cycle
         run: uv run pytest tests/test_worker_runner_db.py
 
-#  worker:
-#    name: worker (lint & types)
-#    runs-on: ubuntu-latest
-#    defaults:
-#      run:
-#        working-directory: src/worker
-#    steps:
-#      - uses: actions/checkout@v4
-#
-#      - uses: astral-sh/setup-uv@v5
-#        with:
-#          enable-cache: true
-#          cache-dependency-glob: src/worker/uv.lock
-#
-#      - name: Install dependencies
-#        run: uv sync --dev
-#
-#      - name: Ruff check
-#        run: uv run ruff check .
-#
-#      - name: Ruff format
-#        run: uv run ruff format --check .
-#
-#      - name: Mypy
-#        run: uv run mypy .
-#
-#  server:
-#    name: server (types)
-#    runs-on: ubuntu-latest
-#    defaults:
-#      run:
-#        working-directory: src/server
-#    steps:
-#      - uses: actions/checkout@v4
-#
-#      - uses: astral-sh/setup-uv@v5
-#        with:
-#          enable-cache: true
-#          cache-dependency-glob: src/server/uv.lock
-#
-#      - name: Install dependencies
-#        run: uv sync --dev
-#
-#      - name: Mypy
-#        run: uv run mypy
-
   release_dry_run:
     name: release dry-run (build + twine)
     runs-on: ubuntu-latest
