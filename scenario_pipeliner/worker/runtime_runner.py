@@ -58,7 +58,7 @@ async def create_cyclical_task(
     alias = seed.alias or f"task-{seed.scenario}"
     steps_names = list(seed.steps_names)
     async with pool.acquire() as conn:
-        task_id = await conn.fetchval(
+        row = await conn.fetchrow(
             """
             INSERT INTO tasks (
                 scenario, status, source, type_task, interval_seconds,
@@ -76,6 +76,7 @@ async def create_cyclical_task(
             alias,
             steps_names,
         )
+    task_id = row.get("id") if row is not None else None
     if task_id is None:
         raise RuntimeError("failed to insert cyclical task")
     return int(task_id)

@@ -92,7 +92,7 @@ quote-style = "double"
 [tool.mypy]
 python_version = "3.13"
 plugins = ["pydantic.mypy"]
-explicit_package_bases = false
+explicit_package_bases = true
 exclude = ["\\.venv/"]
 
 [[tool.mypy.overrides]]
