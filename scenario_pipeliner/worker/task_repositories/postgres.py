@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Protocol
 
 from scenario_pipeliner.worker.core.enums import TaskSource, TaskStatus, TaskType
@@ -17,6 +17,7 @@ from scenario_pipeliner.worker.core.states import (
     TaskResultError,
     TaskState,
 )
+from scenario_pipeliner.worker.core.utils import get_params_for_cyclical_task
 from scenario_pipeliner.worker.task_repositories.protocol import TaskRepository
 
 _INCOMPLETE_TASK_STATUSES = frozenset(
@@ -287,7 +288,9 @@ class PostgresTaskRepository(TaskRepository):
             )
 
     async def _persist_task_with_status(self, task: TaskState, *, status: str) -> None:
-        status, current_executions, next_run_at = self._cyclical_params(status, task)
+        status, current_executions, next_run_at = get_params_for_cyclical_task(
+            status, task
+        )
         if task.parent_id is None and status == TaskStatus.FINISHED.value:
             (
                 pending_blocking,
@@ -353,22 +356,6 @@ class PostgresTaskRepository(TaskRepository):
         ):
             return task.payload.model_dump_json(exclude_none=True)
         return None
-
-    @staticmethod
-    def _cyclical_params(
-        status: str,
-        task: TaskState,
-    ) -> tuple[str, int, datetime | None]:
-        current_executions = task.current_executions
-        next_run_at: datetime | None = None
-        if task.type_task == TaskType.CYCLICAL and (
-            not task.result.ok or status == TaskStatus.FAILED.value
-        ):
-            current_executions += 1
-            if task.max_executions is None or current_executions < task.max_executions:
-                status = TaskStatus.NEW.value
-                next_run_at = datetime.now() + timedelta(seconds=task.interval_seconds)
-        return status, current_executions, next_run_at
 
     @staticmethod
     def _row_to_task_state(row: dict[str, Any]) -> TaskState:

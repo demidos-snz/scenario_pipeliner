@@ -149,3 +149,29 @@ def test_postgres_repository_persists_cyclical_retry() -> None:
     assert update_args[1] == 1
     assert update_args[-1] == 11
     assert update_args[-2] is not None
+
+
+def test_postgres_repository_persists_cyclical_success_requeue() -> None:
+    conn = _FakeConnection()
+    repository = PostgresTaskRepository(
+        storage=PostgresTaskStorage(pool=_FakePool(conn))
+    )
+    task = TaskState(
+        task_id=12,
+        scenario="scenario9",
+        type_task=TaskType.CYCLICAL,
+        interval_seconds=30,
+        max_executions=None,
+        current_executions=2,
+        payload=TaskPayload(type_doc=EnumDoc.JSON, data=['{"cursor":1}']),
+    )
+    task.result.ok = True
+
+    asyncio.run(repository.persist_task_result(task))
+
+    assert len(conn.executed) >= 2
+    _, update_args = conn.executed[1]
+    assert update_args[0] == "NEW"
+    assert update_args[1] == 3
+    assert update_args[-1] == 12
+    assert update_args[-2] is not None
