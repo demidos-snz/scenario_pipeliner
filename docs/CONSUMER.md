@@ -104,11 +104,10 @@ Public Python API (stable): `ScenarioPipelinerConfig`, `apply_migrations` (dry-r
 
 ## 5. Recommended command order
 
-From your app directory (with Postgres up and `.env` loaded):
+From your app directory (with Postgres up). CLI loads `.env` from the current
+working directory (and parents) automatically; exported process env still wins.
 
 ```bash
-export $(grep -v '^#' .env | xargs)   # or use your preferred dotenv tool
-
 # 1) plan / validate plugins
 scenario_pipeliner migrate --dry-run --format json --db-backend postgresql
 

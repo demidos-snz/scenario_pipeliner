@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scenario_pipeliner"
-version = "0.0.1"
+version = "0.0.2"
 description = "Plugin-based scenario migration planner and core DB migrator"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -31,6 +31,7 @@ dependencies = [
     "packaging>=24.2",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.51",
 ]
 

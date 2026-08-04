@@ -24,6 +24,8 @@ class RuntimeEnvSettings(BaseSettings):
     """Runner process settings loaded from environment via pydantic-settings."""
 
     model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
         populate_by_name=True,
@@ -103,6 +105,8 @@ class PostgresRuntimeSettings(BaseSettings):
     """Postgres connection settings for the runner entrypoint."""
 
     model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
         populate_by_name=True,

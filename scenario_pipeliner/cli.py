@@ -19,6 +19,7 @@ from scenario_pipeliner.core.plugin_checksum import (
     write_checksum_to_manifest,
 )
 from scenario_pipeliner.core.plugin_migrate import apply_plugin_migrations_async
+from scenario_pipeliner.env_loader import load_environment_file
 from scenario_pipeliner.worker.core.custom_settings import PostgreSQLClientSettings
 
 
@@ -199,6 +200,8 @@ async def _run_worker(*, skip_migrations: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Load before argparse defaults (os.getenv) and pydantic-settings are resolved.
+    load_environment_file()
     parser = build_parser()
     args = parser.parse_args(argv)
 
