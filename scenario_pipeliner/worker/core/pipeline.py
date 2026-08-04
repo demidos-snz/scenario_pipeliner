@@ -27,6 +27,10 @@ class AsyncPipeline:
         with self.bind_cancel_event(state.cancel_event):
             for step in self.steps:
                 if state.is_cancelled:
+                    logger.warning(
+                        "Pipeline execution cancelled before step: %s",
+                        step.__class__.__name__,
+                    )
                     raise PipelineCancelledError("Pipeline was cancelled by token")
 
                 if not step.initialized:

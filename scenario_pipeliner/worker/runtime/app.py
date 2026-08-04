@@ -38,11 +38,26 @@ class RunnerApp:
     async def from_env(cls) -> "RunnerApp":
         setup_logging()
         bootstrap = RuntimeBootstrap.from_env()
+        logger.info(
+            "Starting worker: runner_mode=db db_backend=%s apply_migrations=%s "
+            "plugins_root=%s",
+            bootstrap.env.db_backend.value,
+            bootstrap.env.apply_migrations,
+            bootstrap.env.plugins_root.as_posix(),
+        )
         pool = await bootstrap.create_pool()
         try:
             if bootstrap.env.apply_migrations:
+                logger.info("Applying core and plugin migrations")
                 await bootstrap.apply_core_migrations()
-                await bootstrap.apply_plugin_migrations(pool)
+                applied = await bootstrap.apply_plugin_migrations(pool)
+                if applied:
+                    logger.info("Applied plugin migrations: %s", ", ".join(applied))
+            else:
+                logger.info(
+                    "Skipping migrations "
+                    "(--skip-migrations / RUNNER_APPLY_MIGRATIONS=false)"
+                )
             plugin_services = bootstrap.plugin_services(pool)
             scenarios = bootstrap.list_scenarios(plugin_services)
             for scenario in scenarios:
@@ -54,8 +69,10 @@ class RunnerApp:
                 plugin_services=plugin_services,
             )
             logger.info(
-                "runner ready; scenarios=%s (create tasks separately; see ROADMAP)",
+                "runner ready; scenarios=%s poll_interval=%ss tasks_limit=%s",
                 ", ".join(scenarios),
+                bootstrap.env.runner_poll_interval_seconds,
+                bootstrap.env.runner_tasks_limit,
             )
             return cls(bootstrap=bootstrap, pool=pool, runner=runner)
         except Exception:
@@ -65,6 +82,7 @@ class RunnerApp:
     def stop(self) -> None:
         if self._stop_event.is_set():
             return
+        logger.info("Stop event received, halting runner")
         self._stop_event.set()
         self.runner.stop()
 

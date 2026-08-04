@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -42,6 +43,8 @@ from scenario_pipeliner.worker.task_repositories import (
     SQLiteTaskRepositoryStub,
     TaskRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 FetchBatchState = Callable[[], Awaitable[ExecutionBatchState]]
 
@@ -155,12 +158,34 @@ def create_runner_db_with_repository(
         await repository.mark_task_running(task)
 
     async def default_on_task_success(task) -> None:
-        await repository.persist_task_result(task)
+        try:
+            await repository.persist_task_result(task)
+            logger.info(
+                "Task %s finished ok=%s scenario=%s",
+                task.task_id,
+                task.result.ok,
+                task.scenario,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist result for task %s", task.task_id
+            )
+            raise
 
     async def default_on_task_error(task, error: Exception) -> None:
-        await repository.persist_task_error(task, error)
+        try:
+            await repository.persist_task_error(task, error)
+        except Exception:
+            logger.exception(
+                "Failed to persist error for task %s", task.task_id
+            )
+            raise
 
     async def default_on_timeout(tasks) -> None:
+        logger.warning(
+            "Persisting timeout for %s task(s) after shutdown timeout",
+            len(tasks),
+        )
         await repository.persist_timeout(tasks)
 
     return create_runner_db(

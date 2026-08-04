@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
@@ -19,6 +20,8 @@ from scenario_pipeliner.worker.core.states import (
 )
 from scenario_pipeliner.worker.core.utils import get_params_for_cyclical_task
 from scenario_pipeliner.worker.task_repositories.protocol import TaskRepository
+
+logger = logging.getLogger(__name__)
 
 _INCOMPLETE_TASK_STATUSES = frozenset(
     {TaskStatus.QUEUED.value, TaskStatus.RUNNING.value}
@@ -192,13 +195,13 @@ class PostgresTaskStorage(NativeTaskStorage):
         terminal_statuses = tuple(_TERMINAL_SUBTASK_STATUSES)
         failed_statuses = tuple(_FAILED_SUBTASK_STATUSES)
         terminal_placeholders = ", ".join(
-            f"${index + 2}" for index in range(len(terminal_statuses))
+            f"${index + 1}" for index in range(len(terminal_statuses))
         )
-        failed_offset = len(terminal_statuses) + 2
+        failed_offset = len(terminal_statuses) + 1
         failed_placeholders = ", ".join(
             f"${index + failed_offset}" for index in range(len(failed_statuses))
         )
-        task_id_idx = len(terminal_statuses) + len(failed_statuses) + 2
+        task_id_idx = len(terminal_statuses) + len(failed_statuses) + 1
         query = f"""
             SELECT
                 SUM(CASE WHEN is_block = TRUE AND status NOT IN ({terminal_placeholders}) THEN 1 ELSE 0 END) as pending_blocking,
@@ -277,6 +280,9 @@ class PostgresTaskRepository(TaskRepository):
 
     async def persist_timeout(self, tasks: list[TaskState]) -> None:
         for task in tasks:
+            logger.warning(
+                "Task %s cancelled after shutdown timeout", task.task_id
+            )
             task.cancel()
             task.result.ok = False
             task.result.error = TaskResultError(
@@ -288,6 +294,7 @@ class PostgresTaskRepository(TaskRepository):
             )
 
     async def _persist_task_with_status(self, task: TaskState, *, status: str) -> None:
+        original_status = status
         status, current_executions, next_run_at = get_params_for_cyclical_task(
             status, task
         )
@@ -300,6 +307,22 @@ class PostgresTaskRepository(TaskRepository):
                 status = TaskStatus.WAITING.value
             elif failed_non_blocking > 0:
                 status = TaskStatus.FINISHED_WITH_ERROR.value
+
+        if (
+            task.type_task == TaskType.CYCLICAL
+            and status == TaskStatus.NEW.value
+            and original_status != TaskStatus.NEW.value
+        ):
+            max_label = (
+                str(task.max_executions) if task.max_executions is not None else "inf"
+            )
+            logger.info(
+                "Requeued cyclical task %s as NEW (execution %s/%s, next_run_at=%s)",
+                task.task_id,
+                current_executions,
+                max_label,
+                next_run_at,
+            )
 
         payload_json = self._payload_for_retry(task, status=status)
         await self._storage.insert_result_and_update_task(

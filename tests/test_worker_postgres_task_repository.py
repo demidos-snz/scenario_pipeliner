@@ -175,3 +175,45 @@ def test_postgres_repository_persists_cyclical_success_requeue() -> None:
     assert update_args[1] == 3
     assert update_args[-1] == 12
     assert update_args[-2] is not None
+
+
+def test_count_parent_subtasks_state_uses_dense_placeholders() -> None:
+    conn = _FakeConnection()
+    conn.fetchrow_result = {"pending_blocking": 0, "failed_non_blocking": 0}
+    storage = PostgresTaskStorage(pool=_FakePool(conn))
+
+    pending, failed = asyncio.run(storage.count_parent_subtasks_state(99))
+
+    assert pending == 0
+    assert failed == 0
+    query, args = conn.executed[0]
+    assert "NOT IN ($1, $2, $3, $4)" in query
+    assert "IN ($5, $6)" in query
+    assert "WHERE parent_id = $7" in query
+    assert "$8" not in query
+    assert args[-1] == 99
+
+
+def test_postgres_repository_persists_cyclical_success_at_max_executions() -> None:
+    conn = _FakeConnection()
+    conn.fetchrow_result = {"pending_blocking": 0, "failed_non_blocking": 0}
+    repository = PostgresTaskRepository(
+        storage=PostgresTaskStorage(pool=_FakePool(conn))
+    )
+    task = TaskState(
+        task_id=13,
+        scenario="scenario9",
+        type_task=TaskType.CYCLICAL,
+        interval_seconds=30,
+        max_executions=3,
+        current_executions=2,
+    )
+    task.result.ok = True
+
+    asyncio.run(repository.persist_task_result(task))
+
+    # insert result + count parent subtasks + update task
+    assert any("NOT IN ($1, $2, $3, $4)" in query for query, _ in conn.executed)
+    update_queries = [args for query, args in conn.executed if query.startswith("UPDATE")]
+    assert update_queries
+    assert update_queries[0][0] == "FINISHED"

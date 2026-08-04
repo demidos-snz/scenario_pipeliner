@@ -1,8 +1,12 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 
-from scenario_pipeliner.worker.core.exceptions import PipelineCancelledError
+from scenario_pipeliner.worker.core.exceptions import (
+    DatabaseError,
+    PipelineCancelledError,
+)
 from scenario_pipeliner.worker.core.pipeline import AsyncPipeline
 from scenario_pipeliner.worker.core.runner import AsyncRunner
 from scenario_pipeliner.worker.core.settings import RunnerDBSettings
@@ -13,6 +17,8 @@ from scenario_pipeliner.worker.execution.db_orchestrator import (
     TaskStateHandler,
     TimeoutHandler,
 )
+
+logger = logging.getLogger(__name__)
 
 FetchBatchState = Callable[[], Awaitable[ExecutionBatchState]]
 
@@ -58,6 +64,10 @@ class RunnerDB(AsyncRunner):
         state = await self._fetch_batch_state()
         self.current_state = state
         try:
+            if not state.tasks:
+                logger.warning("No tasks found")
+                return
+            logger.info("Found %s tasks", len(state.tasks))
             await self._orchestrator.execute(
                 state,
                 on_task_start=self._on_task_start,
@@ -76,13 +86,27 @@ class RunnerDB(AsyncRunner):
                     await self._run_single_cycle()
                     self._consecutive_errors = 0
                 except PipelineCancelledError:
-                    # Cancel signal during shutdown/timeout is expected in runner loop.
-                    pass
+                    logger.debug("Pipeline cancelled during poll cycle")
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as e:
                     self._consecutive_errors += 1
                     wait_seconds = self._error_backoff_seconds()
+                    if isinstance(e, DatabaseError):
+                        logger.error(
+                            "Database error processing tasks "
+                            "(backoff %ss, attempt %s): %s",
+                            wait_seconds,
+                            self._consecutive_errors,
+                            e,
+                        )
+                    else:
+                        logger.exception(
+                            "Error processing tasks (backoff %ss, attempt %s): %s",
+                            wait_seconds,
+                            self._consecutive_errors,
+                            e,
+                        )
 
                 if self._stop_event.is_set():
                     break
