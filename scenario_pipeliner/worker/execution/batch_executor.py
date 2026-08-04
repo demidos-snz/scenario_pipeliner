@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from contextlib import suppress
 from typing import Any
 
 from scenario_pipeliner.worker.core.exceptions import PipelineCancelledError
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionBatchRunner:
@@ -33,6 +36,10 @@ class ExecutionBatchRunner:
                 timeout=self._shutdown_timeout_seconds,
             )
         except TimeoutError:
+            logger.warning(
+                "Shutdown timeout (%ss) waiting for tasks in batch, forcing cancellation",
+                self._shutdown_timeout_seconds,
+            )
             for task in running_tasks:
                 if not task.done():
                     task.cancel()

@@ -6,7 +6,7 @@ from typing import Any
 from scenario_pipeliner.worker.core.enums import EnumDoc, TaskType
 from scenario_pipeliner.worker.core.settings import RepositoryPollSettings
 from scenario_pipeliner.worker.core.states import TaskPayload, TaskState
-from scenario_pipeliner.worker.postgres_task_repository import (
+from scenario_pipeliner.worker.task_repositories import (
     PostgresTaskRepository,
     PostgresTaskStorage,
 )
@@ -149,3 +149,73 @@ def test_postgres_repository_persists_cyclical_retry() -> None:
     assert update_args[1] == 1
     assert update_args[-1] == 11
     assert update_args[-2] is not None
+
+
+def test_postgres_repository_persists_cyclical_success_requeue() -> None:
+    conn = _FakeConnection()
+    repository = PostgresTaskRepository(
+        storage=PostgresTaskStorage(pool=_FakePool(conn))
+    )
+    task = TaskState(
+        task_id=12,
+        scenario="scenario9",
+        type_task=TaskType.CYCLICAL,
+        interval_seconds=30,
+        max_executions=None,
+        current_executions=2,
+        payload=TaskPayload(type_doc=EnumDoc.JSON, data=['{"cursor":1}']),
+    )
+    task.result.ok = True
+
+    asyncio.run(repository.persist_task_result(task))
+
+    assert len(conn.executed) >= 2
+    _, update_args = conn.executed[1]
+    assert update_args[0] == "NEW"
+    assert update_args[1] == 3
+    assert update_args[-1] == 12
+    assert update_args[-2] is not None
+
+
+def test_count_parent_subtasks_state_uses_dense_placeholders() -> None:
+    conn = _FakeConnection()
+    conn.fetchrow_result = {"pending_blocking": 0, "failed_non_blocking": 0}
+    storage = PostgresTaskStorage(pool=_FakePool(conn))
+
+    pending, failed = asyncio.run(storage.count_parent_subtasks_state(99))
+
+    assert pending == 0
+    assert failed == 0
+    query, args = conn.executed[0]
+    assert "NOT IN ($1, $2, $3, $4)" in query
+    assert "IN ($5, $6)" in query
+    assert "WHERE parent_id = $7" in query
+    assert "$8" not in query
+    assert args[-1] == 99
+
+
+def test_postgres_repository_persists_cyclical_success_at_max_executions() -> None:
+    conn = _FakeConnection()
+    conn.fetchrow_result = {"pending_blocking": 0, "failed_non_blocking": 0}
+    repository = PostgresTaskRepository(
+        storage=PostgresTaskStorage(pool=_FakePool(conn))
+    )
+    task = TaskState(
+        task_id=13,
+        scenario="scenario9",
+        type_task=TaskType.CYCLICAL,
+        interval_seconds=30,
+        max_executions=3,
+        current_executions=2,
+    )
+    task.result.ok = True
+
+    asyncio.run(repository.persist_task_result(task))
+
+    # insert result + count parent subtasks + update task
+    assert any("NOT IN ($1, $2, $3, $4)" in query for query, _ in conn.executed)
+    update_queries = [
+        args for query, args in conn.executed if query.startswith("UPDATE")
+    ]
+    assert update_queries
+    assert update_queries[0][0] == "FINISHED"

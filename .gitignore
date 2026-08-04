@@ -200,11 +200,10 @@ __marimo__/
 ### JetBrains template
 .idea/
 
-# Review files
+# Review, tmp files
 REVIEW.md
 SUMMARY.md
 HISTORY.md
 RFC-*
 PREPARE_TO_PUBLISH.md
-worker/README.md
-worker/README_.md
+/plugins

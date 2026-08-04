@@ -89,3 +89,23 @@ def test_plugin_context_resolve_options_from_instance() -> None:
     options = context.resolve_options(_Options)
 
     assert options is instance
+
+
+def test_plugin_context_shared_services() -> None:
+    context = PluginContext(
+        plugin_name="plugin_a",
+        plugin_dir=Path("/tmp/plugins/plugin_a"),
+        plugins_root=Path("/tmp/plugins"),
+        services={"__shared__": {"postgres_pool": "pool"}},
+    )
+
+    assert context.shared_services() == {"postgres_pool": "pool"}
+
+
+def test_runtime_bootstrap_plugin_services_includes_shared_pool() -> None:
+    from scenario_pipeliner.worker.plugin_registry import SHARED_PLUGIN_SERVICES_KEY
+    from scenario_pipeliner.worker.runtime.app_bootstrap import RuntimeBootstrap
+
+    services = RuntimeBootstrap.plugin_services(pool="pool")  # type: ignore[arg-type]
+
+    assert services[SHARED_PLUGIN_SERVICES_KEY]["postgres_pool"] == "pool"

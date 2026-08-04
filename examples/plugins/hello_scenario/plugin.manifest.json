@@ -1,0 +1,20 @@
+{
+  "plugin_name": "hello_scenario",
+  "plugin_version": "1.0.0",
+  "plugin_api_version": "v1",
+  "core_compat": ">=0.1,<1.0",
+  "checksum": {
+    "algorithm": "sha256",
+    "scope": "unpacked",
+    "value": "7f10a3bf7249d2af98f59a40e146a20de4abae6f24a88c48e435a03cdd5af5b7"
+  },
+  "entrypoint": "hello_scenario.plugin:register",
+  "scenarios": [
+    "hello_scenario.ping"
+  ],
+  "migrations": {
+    "migration_order": "20260803120000",
+    "sqlite": "migration.sql",
+    "postgresql": "migration.sql"
+  }
+}

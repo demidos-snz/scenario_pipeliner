@@ -2,7 +2,7 @@ from scenario_pipeliner.worker.plugin_registry import (
     MainPipelinePluginRegistry,
     ScenarioPluginDefinition,
 )
-from scenario_pipeliner.worker.settings_bridge import (
+from scenario_pipeliner.worker.runtime.settings_bridge import (
     ExecuteSettings,
     RabbitMQSettings,
 )

@@ -3,8 +3,8 @@ requires = ["setuptools>=80", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "scenario-pipeliner"
-version = "0.1.0"
+name = "scenario_pipeliner"
+version = "0.0.2"
 description = "Plugin-based scenario migration planner and core DB migrator"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -30,6 +30,8 @@ dependencies = [
     "httpx>=0.28.1",
     "packaging>=24.2",
     "pydantic>=2.11.0",
+    "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.51",
 ]
 
@@ -42,6 +44,11 @@ Documentation = "https://github.com/demidos-snz/scenario_pipeliner#readme"
 Issues = "https://github.com/demidos-snz/scenario_pipeliner/issues"
 Repository = "https://github.com/demidos-snz/scenario_pipeliner.git"
 
+[project.optional-dependencies]
+sentry = [
+    "sentry-sdk>=2.64.0",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.18.0",
@@ -50,21 +57,10 @@ dev = [
     "twine>=6.2.0",
 ]
 
-[tool.setuptools]
-package-dir = {scenario_pipeliner = "."}
-packages = [
-    "scenario_pipeliner",
-    "scenario_pipeliner.api",
-    "scenario_pipeliner.core",
-    "scenario_pipeliner.core_migrations",
-    "scenario_pipeliner.core_migrations.versions",
-    "scenario_pipeliner.track_documents",
-    "scenario_pipeliner.worker",
-    "scenario_pipeliner.worker.core",
-    "scenario_pipeliner.worker.core.custom_clients",
-    "scenario_pipeliner.worker.core.custom_settings",
-    "scenario_pipeliner.worker.execution",
-]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scenario_pipeliner*"]
+exclude = ["scenario_pipeliner.tests*"]
 
 [tool.setuptools.package-data]
 scenario_pipeliner = ["core_migrations/*.mako"]
@@ -72,13 +68,13 @@ scenario_pipeliner = ["core_migrations/*.mako"]
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]
-pythonpath = [".."]
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py313"
 line-length = 88
-src = [".."]
-exclude = [".venv", "__pycache__"]
+src = ["."]
+exclude = [".venv", "__pycache__", "dist", "plugins"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -93,15 +89,16 @@ quote-style = "double"
 [tool.mypy]
 python_version = "3.13"
 plugins = ["pydantic.mypy"]
-explicit_package_bases = false
-exclude = ["\\.venv/"]
+explicit_package_bases = true
+mypy_path = ["."]
+files = ["scenario_pipeliner", "examples/main.py", "tests"]
+exclude = ["\\.venv/", "plugins/", "examples/plugins/", "dist/"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg"]
+module = ["asyncpg", "sentry_sdk", "sentry_sdk.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
-

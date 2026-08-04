@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 
@@ -15,8 +16,11 @@ from scenario_pipeliner.worker.execution.batch_executor import (
     ExecutionBatchRunner,
 )
 from scenario_pipeliner.worker.execution.task_dispatch import (
+    DEFAULT_PIPELINE_KEY,
     TaskExecutionRouter,
 )
+
+logger = logging.getLogger(__name__)
 
 PollerFactory = Callable[
     [Callable[[], bool], Callable[[], None]],
@@ -74,17 +78,31 @@ class DBExecutionOrchestrator:
 
         async def process_task(task_state: TaskState) -> None:
             async with semaphore:
+                logger.info(
+                    "Processing task %s with scenario %s",
+                    task_state.task_id,
+                    task_state.scenario,
+                )
                 task_state.cancel_event = task_cancel_events[task_state.task_id]
                 error_state: TaskState = task_state
                 try:
                     promoted = self._router.promote_task_state(task_state)
                     error_state = promoted
-                    pipeline_factory, _is_default = (
+                    pipeline_factory, is_default = (
                         self._router.resolve_pipeline_factory(promoted.scenario)
                     )
                     if pipeline_factory is None:
+                        logger.error(
+                            "Pipeline for scenario %s not found", promoted.scenario
+                        )
                         raise LookupError(
                             f"Pipeline for scenario {promoted.scenario!r} not found"
+                        )
+                    if is_default:
+                        logger.warning(
+                            "Pipeline for scenario %s not found, using %s",
+                            promoted.scenario,
+                            DEFAULT_PIPELINE_KEY,
                         )
                     pipeline = pipeline_factory()
                     if not isinstance(pipeline, AsyncPipeline):
@@ -97,13 +115,24 @@ class DBExecutionOrchestrator:
                         raise PipelineCancelledError(
                             f"Task {promoted.task_id} cancelled before execute"
                         )
+                    logger.info("Executing pipeline for scenario %s", promoted.scenario)
                     if on_task_start is not None:
                         await on_task_start(promoted)
                     async with pipeline:
                         await pipeline.execute(state=promoted)
                     if on_task_success is not None:
                         await on_task_success(promoted)
+                except PipelineCancelledError as e:
+                    logger.warning(
+                        "Task %s interrupted (pause/shutdown), updating status to NEW",
+                        error_state.task_id,
+                    )
+                    if on_task_error is not None:
+                        await on_task_error(error_state, e)
+                    else:
+                        raise
                 except Exception as e:
+                    logger.exception("Task %s failed: %s", error_state.task_id, e)
                     if on_task_error is not None:
                         await on_task_error(error_state, e)
                     else:

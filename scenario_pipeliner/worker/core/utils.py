@@ -15,9 +15,7 @@ def get_params_for_cyclical_task(
     current_executions: int = state.current_executions
     next_run_at: datetime.datetime | None = None
 
-    if state.type_task == TaskType.CYCLICAL and (
-        not state.result.ok or status == TaskStatus.FAILED.value
-    ):
+    if state.type_task == TaskType.CYCLICAL:
         current_executions += 1
         if state.max_executions is None or current_executions < state.max_executions:
             status = TaskStatus.NEW.value
