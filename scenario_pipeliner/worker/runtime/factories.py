@@ -167,18 +167,14 @@ def create_runner_db_with_repository(
                 task.scenario,
             )
         except Exception:
-            logger.exception(
-                "Failed to persist result for task %s", task.task_id
-            )
+            logger.exception("Failed to persist result for task %s", task.task_id)
             raise
 
     async def default_on_task_error(task, error: Exception) -> None:
         try:
             await repository.persist_task_error(task, error)
         except Exception:
-            logger.exception(
-                "Failed to persist error for task %s", task.task_id
-            )
+            logger.exception("Failed to persist error for task %s", task.task_id)
             raise
 
     async def default_on_timeout(tasks) -> None:

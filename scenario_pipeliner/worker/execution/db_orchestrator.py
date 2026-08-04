@@ -115,9 +115,7 @@ class DBExecutionOrchestrator:
                         raise PipelineCancelledError(
                             f"Task {promoted.task_id} cancelled before execute"
                         )
-                    logger.info(
-                        "Executing pipeline for scenario %s", promoted.scenario
-                    )
+                    logger.info("Executing pipeline for scenario %s", promoted.scenario)
                     if on_task_start is not None:
                         await on_task_start(promoted)
                     async with pipeline:

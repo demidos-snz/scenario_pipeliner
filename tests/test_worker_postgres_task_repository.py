@@ -214,6 +214,8 @@ def test_postgres_repository_persists_cyclical_success_at_max_executions() -> No
 
     # insert result + count parent subtasks + update task
     assert any("NOT IN ($1, $2, $3, $4)" in query for query, _ in conn.executed)
-    update_queries = [args for query, args in conn.executed if query.startswith("UPDATE")]
+    update_queries = [
+        args for query, args in conn.executed if query.startswith("UPDATE")
+    ]
     assert update_queries
     assert update_queries[0][0] == "FINISHED"

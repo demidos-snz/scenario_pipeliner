@@ -280,9 +280,7 @@ class PostgresTaskRepository(TaskRepository):
 
     async def persist_timeout(self, tasks: list[TaskState]) -> None:
         for task in tasks:
-            logger.warning(
-                "Task %s cancelled after shutdown timeout", task.task_id
-            )
+            logger.warning("Task %s cancelled after shutdown timeout", task.task_id)
             task.cancel()
             task.result.ok = False
             task.result.error = TaskResultError(
