@@ -6,7 +6,7 @@ from typing import Any
 from scenario_pipeliner.worker.core.enums import EnumDoc, TaskType
 from scenario_pipeliner.worker.core.settings import RepositoryPollSettings
 from scenario_pipeliner.worker.core.states import TaskPayload, TaskState
-from scenario_pipeliner.worker.postgres_task_repository import (
+from scenario_pipeliner.worker.task_repositories import (
     PostgresTaskRepository,
     PostgresTaskStorage,
 )

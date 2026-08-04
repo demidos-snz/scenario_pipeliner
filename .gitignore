@@ -206,6 +206,4 @@ SUMMARY.md
 HISTORY.md
 RFC-*
 PREPARE_TO_PUBLISH.md
-worker/README.md
-worker/README_.md
-/tests/test_track_documents_plugin.py
+/plugins

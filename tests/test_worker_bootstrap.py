@@ -3,21 +3,15 @@ from dataclasses import dataclass
 
 import pytest
 
-import scenario_pipeliner.worker.bootstrap as worker_bootstrap
+import scenario_pipeliner.worker.runtime.factories as worker_bootstrap
 from scenario_pipeliner.api.config import ScenarioPipelinerConfig
 from scenario_pipeliner.api.enums import DbBackend
-from scenario_pipeliner.worker.bootstrap import (
-    build_pipeline_factories_from_registry,
-    create_native_task_repository,
-    create_runner_db,
-)
 from scenario_pipeliner.worker.core.pipeline import AsyncPipeline
 from scenario_pipeliner.worker.core.settings import (
     RepositoryPollSettings,
     RunnerDBSettings,
 )
 from scenario_pipeliner.worker.core.states import TaskState
-from scenario_pipeliner.worker.core.task_repository import TaskRepository
 from scenario_pipeliner.worker.execution.db_orchestrator import (
     ExecutionBatchState,
 )
@@ -25,11 +19,17 @@ from scenario_pipeliner.worker.plugin_registry import (
     MainPipelinePluginRegistry,
     ScenarioPluginDefinition,
 )
-from scenario_pipeliner.worker.postgres_task_repository import (
+from scenario_pipeliner.worker.runtime.factories import (
+    build_pipeline_factories_from_registry,
+    create_native_task_repository,
+    create_runner_db,
+)
+from scenario_pipeliner.worker.task_repositories import (
     PostgresPoolProtocol,
     PostgresTaskRepository,
+    SQLiteTaskRepositoryStub,
+    TaskRepository,
 )
-from scenario_pipeliner.worker.sqlite_task_repository import SQLiteTaskRepositoryStub
 
 
 @dataclass

@@ -5,7 +5,7 @@ import pytest
 
 from scenario_pipeliner.api.config import ScenarioPipelinerConfig
 from scenario_pipeliner.api.enums import DbBackend, Mode
-from scenario_pipeliner.worker.runtime_registry import (
+from scenario_pipeliner.worker.runtime.registry import (
     build_worker_registry_from_manifests,
 )
 
