@@ -5,6 +5,7 @@ from typing import Any, TypeVar
 
 TOptions = TypeVar("TOptions")
 
+SHARED_PLUGIN_SERVICES_KEY = "__shared__"
 
 PipelineFactory = Callable[[], Any]
 StateClass = type[Any]
@@ -16,6 +17,13 @@ class PluginContext:
     plugin_dir: Path
     plugins_root: Path
     services: Mapping[str, Any]
+
+    def shared_services(self) -> Mapping[str, Any]:
+        """Return host-provided shared services (e.g. postgres_pool)."""
+        payload = self.services.get(SHARED_PLUGIN_SERVICES_KEY)
+        if isinstance(payload, Mapping):
+            return payload
+        return {}
 
     def resolve_options(self, options_type: type[TOptions]) -> TOptions | None:
         """Resolve plugin-specific options from services by plugin_name.

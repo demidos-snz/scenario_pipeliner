@@ -186,7 +186,14 @@ See also [`examples/.env.example`](../examples/.env.example).
 4. Discover plugins under `SCENARIO_PIPELINER_PLUGINS_ROOT` and enable registered scenarios.
 5. Build Postgres `RunnerDB` and poll/execute existing `tasks` until timeout / signal.
 
-Plugins that need host DI can use `PluginContext.services` by subclassing bootstrap in a custom launcher; the stock entrypoint passes an empty services map (skeleton plugins should not require it).
+Plugins that need host DI use `PluginContext.services`:
+
+- shared resources from stock `run`: `services["__shared__"]` (e.g. `postgres_pool`);
+- plugin-specific options: `services["<plugin_name>"]` (mapping or options object).
+
+`track_documents` can auto-configure from `__shared__.postgres_pool` + Diadoc env vars
+(`API_BASE_URL`, `DIADOC_API_CLIENT_ID`, `DIADOC_BOX_IDS`, `API_TOKEN` or
+`API_USERNAME`/`API_PASSWORD`).
 
 ## 8. Exit codes
 

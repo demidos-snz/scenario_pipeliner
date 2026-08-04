@@ -8,6 +8,7 @@ from scenario_pipeliner.api.config import CoreMigrationConfig
 from scenario_pipeliner.api.enums import DbBackend
 from scenario_pipeliner.core.core_migrate import apply_core_migrations_async
 from scenario_pipeliner.core.plugin_migrate import apply_plugin_migrations_async
+from scenario_pipeliner.worker.plugin_registry import SHARED_PLUGIN_SERVICES_KEY
 from scenario_pipeliner.worker.runtime.registry import (
     build_worker_registry_from_manifests,
 )
@@ -57,9 +58,12 @@ class RuntimeBootstrap:
 
     @staticmethod
     def plugin_services(pool: asyncpg.Pool[Any]) -> dict[str, Any]:
-        """Hook for host-app DI. Default is empty; plugins may read env themselves."""
-        _ = pool
-        return {}
+        """Host DI for plugins.
+
+        Shared runtime resources live under ``SHARED_PLUGIN_SERVICES_KEY``.
+        Plugin-specific options can still be supplied under ``services[plugin_name]``.
+        """
+        return {SHARED_PLUGIN_SERVICES_KEY: {"postgres_pool": pool}}
 
     def list_scenarios(self, plugin_services: dict[str, Any]) -> list[str]:
         registry = build_worker_registry_from_manifests(
