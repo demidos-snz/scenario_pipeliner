@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Iterator
 from types import ModuleType
 
 import pytest
@@ -11,7 +12,7 @@ from scenario_pipeliner.observability import LoggingSettings, setup_logging
 
 
 @pytest.fixture(autouse=True)
-def reset_logging_configured() -> None:
+def reset_logging_configured() -> Iterator[None]:
     logging_module._CONFIGURED = False
     yield
     logging_module._CONFIGURED = False
