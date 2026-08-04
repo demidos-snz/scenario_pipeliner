@@ -94,7 +94,7 @@ files = ["scenario_pipeliner", "examples/main.py", "tests"]
 exclude = ["\\.venv/", "plugins/", "examples/plugins/", "dist/"]
 
 [[tool.mypy.overrides]]
-module = ["asyncpg"]
+module = ["asyncpg", "sentry_sdk", "sentry_sdk.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]
