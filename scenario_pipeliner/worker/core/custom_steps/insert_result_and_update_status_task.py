@@ -9,7 +9,6 @@ from scenario_pipeliner.worker.core.states import TaskState
 from scenario_pipeliner.worker.core.step import AsyncStep
 from scenario_pipeliner.worker.core.utils import get_params_for_cyclical_task
 
-
 # if TYPE_CHECKING:
 #     from main_pipeline.clients import MainPipelineTasksTableDBClient
 

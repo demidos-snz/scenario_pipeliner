@@ -7,7 +7,6 @@ from scenario_pipeliner.worker.core.settings import TSettings
 from scenario_pipeliner.worker.core.states import TaskState
 from scenario_pipeliner.worker.core.step import AsyncStep
 
-
 # if TYPE_CHECKING:
 #     from main_pipeline.clients import MainPipelineTasksTableDBClient
 
