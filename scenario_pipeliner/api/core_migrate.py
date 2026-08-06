@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from warnings import deprecated
 
 from scenario_pipeliner.api.config import CoreMigrationConfig
 from scenario_pipeliner.api.enums import DbBackend
@@ -35,6 +36,8 @@ def apply_core_migrations(
     return asyncio.run(apply_core_migrations_async(config))
 
 
+# fixme not used
+@deprecated("Use apply_core_migrations instead")
 def apply_core_migrations_from_params(
     *,
     db_backend: DbBackend,

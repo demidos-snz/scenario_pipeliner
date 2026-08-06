@@ -190,6 +190,11 @@ async def _migrate_plugins(args: argparse.Namespace) -> int:
 
 
 async def _run_worker(*, skip_migrations: bool) -> int:
+    """Start the Postgres worker via RunnerApp.
+
+    RunnerApp is imported lazily so lighter CLI commands (migrate, db, plugin)
+    do not pay the worker-runtime import cost on every invocation.
+    """
     if skip_migrations:
         os.environ["RUNNER_APPLY_MIGRATIONS"] = "false"
     from scenario_pipeliner.worker.runtime import RunnerApp

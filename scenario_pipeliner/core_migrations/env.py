@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from logging.config import fileConfig
 
 from alembic import context
@@ -47,8 +48,6 @@ def run_migrations_online() -> None:
         async with connectable.connect() as connection:
             await connection.run_sync(do_run_migrations)
         await connectable.dispose()
-
-    import asyncio
 
     asyncio.run(run_async_migrations())
 

@@ -61,11 +61,14 @@ uv run python examples/main.py
 
 Environment variables: see [docs/CONSUMER.md](docs/CONSUMER.md) and [`examples/.env.example`](examples/.env.example).
 
+CLI loads `.env` from the current working directory (and parents) automatically;
+already-exported process environment variables still win.
+
 Common discovery vars:
 
 - `SCENARIO_PIPELINER_MODE`: `dev` (default) or `prod`
 - `SCENARIO_PIPELINER_PLUGINS_ROOT`: plugin root path (default: `plugins`)
-- `SCENARIO_PIPELINER_CORE_VERSION`: core version string (default: `0.1.0`)
+- `SCENARIO_PIPELINER_CORE_VERSION`: core version string for `core_compat` checks
 
 Exit codes for `migrate --dry-run`:
 
@@ -115,7 +118,7 @@ report = apply_core_migrations(
 Each plugin in `report.plugins` has one of:
 
 - `loaded`: plugin passed checks and has migration plan for selected backend.
-- `skipped`: plugin passed checks, but has no migration path for selected backend.
+- `skipped`: plugin passed checks, but either has no `migrations` section or has no migration path for selected backend.
 - `error`: plugin failed validation/policy checks.
 
 For `skipped`, plugin is registered in dry-run context and keeps checksum/policy warnings in `reasons`, plus the skip reason (`no migration path for backend=...`).

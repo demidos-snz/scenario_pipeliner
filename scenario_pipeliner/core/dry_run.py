@@ -19,6 +19,7 @@ from scenario_pipeliner.api.models import (
     MigrationPlanItem,
     PluginDryRunResult,
     PluginManifestV1,
+    PluginMigrations,
 )
 from scenario_pipeliner.core.exceptions import DryRunPluginError
 from scenario_pipeliner.core.manifest_loader import find_manifest_files, load_manifest
@@ -37,11 +38,11 @@ def build_dry_run_report(config: ScenarioPipelinerConfig) -> DryRunReport:
         manifest = None
         try:
             manifest = load_manifest(manifest_path)
+            migrations: PluginMigrations | None = manifest.migrations
             migration_path = _pick_backend_migration_path(
                 backend=config.db_backend,
                 plugin_dir=plugin_dir,
-                sqlite_path=manifest.migrations.sqlite,
-                postgresql_path=manifest.migrations.postgresql,
+                migrations=migrations,
             )
 
             migration_plan = []
@@ -57,11 +58,12 @@ def build_dry_run_report(config: ScenarioPipelinerConfig) -> DryRunReport:
                         DryRunErrorCode.MIGRATION_PATH_NOT_FILE,
                         f"migration path must point to a file: {migration_path.as_posix()}",
                     )
+                assert migrations is not None
                 migration_plan.append(
                     MigrationPlanItem(
                         backend=config.db_backend,
                         path=migration_path.as_posix(),
-                        order=manifest.migrations.migration_order,
+                        order=migrations.migration_order,
                         plugin_name=manifest.plugin_name,
                     )
                 )
@@ -157,10 +159,13 @@ def _pick_backend_migration_path(
     *,
     backend: DbBackend,
     plugin_dir: Path,
-    sqlite_path: str | None,
-    postgresql_path: str | None,
+    migrations: PluginMigrations | None,
 ) -> Path | None:
-    raw_path = sqlite_path if backend == DbBackend.SQLITE else postgresql_path
+    if migrations is None:
+        return None
+    raw_path = (
+        migrations.sqlite if backend == DbBackend.SQLITE else migrations.postgresql
+    )
     if raw_path is None:
         return None
     if Path(raw_path).is_absolute():

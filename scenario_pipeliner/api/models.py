@@ -76,7 +76,7 @@ class PluginManifestV1(BaseModel):
     checksum: ChecksumInfo
     entrypoint: str
     scenarios: list[str]
-    migrations: PluginMigrations
+    migrations: PluginMigrations | None = None
     manifest_path: Path | None = None
 
     @field_validator("plugin_name")

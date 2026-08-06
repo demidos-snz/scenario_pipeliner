@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scenario_pipeliner"
-version = "0.0.2"
+version = "0.0.3"
 description = "Plugin-based scenario migration planner and core DB migrator"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -32,6 +32,7 @@ dependencies = [
     "pydantic>=2.11.0",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.0.0",
+    "sentry-sdk>=2.64.0",
     "sqlalchemy>=2.0.51",
 ]
 
@@ -43,11 +44,6 @@ Homepage = "https://github.com/demidos-snz/scenario_pipeliner"
 Documentation = "https://github.com/demidos-snz/scenario_pipeliner#readme"
 Issues = "https://github.com/demidos-snz/scenario_pipeliner/issues"
 Repository = "https://github.com/demidos-snz/scenario_pipeliner.git"
-
-[project.optional-dependencies]
-sentry = [
-    "sentry-sdk>=2.64.0",
-]
 
 [dependency-groups]
 dev = [

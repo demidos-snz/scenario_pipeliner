@@ -396,6 +396,29 @@ def test_missing_backend_migration_path_is_skipped_with_warning(tmp_path: Path) 
     assert report["plugins"][0]["load_status"] == "skipped"
 
 
+def test_missing_migrations_section_is_skipped_with_warning(tmp_path: Path) -> None:
+    plugin_dir = _prepare_plugin(tmp_path, "acme_docs")
+    manifest_path = plugin_dir / "plugin.manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.pop("migrations", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    config = ScenarioPipelinerConfig(
+        mode=Mode.DEV,
+        db_backend=DbBackend.SQLITE,
+        plugins_root=tmp_path,
+        core_version="0.1.0",
+    )
+
+    report = apply_migrations(config, dry_run=True).model_dump(mode="json")
+
+    assert report["status"] == "warning"
+    assert report["summary"]["plugins_loaded"] == 0
+    assert report["summary"]["plugins_skipped"] == 1
+    assert report["summary"]["migrations_planned"] == 0
+    assert report["plugins"][0]["load_status"] == "skipped"
+    assert "no migration path for backend=sqlite" in report["plugins"][0]["reasons"]
+
+
 def test_skipped_plugin_keeps_checksum_warning_reason(tmp_path: Path) -> None:
     plugin_dir = _prepare_plugin(tmp_path, "acme_docs")
     manifest_path = plugin_dir / "plugin.manifest.json"

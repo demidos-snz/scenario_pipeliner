@@ -18,6 +18,9 @@ class StepSettings(Settings):
     pass
 
 
+TSettings = TypeVar("TSettings", bound=StepSettings)
+
+
 class PipelineSettings(Settings):
     AUTORUN_CONNECT_CLIENTS: bool = True
 

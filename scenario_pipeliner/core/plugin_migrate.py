@@ -15,6 +15,8 @@ def collect_plugin_migration_plans(
     backend = config.db_backend.value
     for manifest_path in find_manifest_files(config.plugins_root):
         manifest = load_manifest(manifest_path)
+        if manifest.migrations is None:
+            continue
         relative = getattr(manifest.migrations, backend, None)
         if not relative:
             continue

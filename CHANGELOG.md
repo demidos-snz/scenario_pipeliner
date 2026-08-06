@@ -16,6 +16,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 - Packaging metadata hardened for PyPI distribution checks.
 - Public API exports narrowed to minimal supported surface.
+- Manifest contract relaxed: `migrations` section is now optional; plugins without it are valid and appear as `skipped` in dry-run migration planning.
 
 ## [0.1.0] - 2026-08-02
 

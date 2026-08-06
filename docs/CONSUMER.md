@@ -59,7 +59,7 @@ Required pieces:
 
 | File | Role |
 |------|------|
-| `plugin.manifest.json` | name, version, `core_compat`, checksum, entrypoint, scenarios, migrations |
+| `plugin.manifest.json` | name, version, `core_compat`, checksum, entrypoint, scenarios, optional migrations |
 | `plugin.py` | `register(registry, context=None)` registering each scenario |
 | pipeline / steps / states | build an `AsyncPipeline` + task state class |
 | `migration.sql` | optional plugin-owned SQL (path from manifest) |
@@ -87,6 +87,9 @@ Manifest sketch:
 }
 ```
 
+`migrations` section is optional. If it is missing (or selected backend path is missing),
+dry-run marks plugin as `skipped` for migration planning.
+
 In `dev` mode checksum mismatches are warnings; in `prod` they fail loading.
 
 ## 4. Capabilities (CLI)
@@ -95,7 +98,7 @@ In `dev` mode checksum mismatches are warnings; in `prod` they fail loading.
 |---------|---------|
 | `scenario_pipeliner migrate --dry-run --db-backend …` | Validate manifests / policy; JSON plan only (no SQL apply) |
 | `scenario_pipeliner db migrate-core --db-backend …` | Apply **core** Alembic migrations (`tasks`, `settings`, `results`) |
-| `scenario_pipeliner db migrate-plugins` | Apply **plugin** SQL files in `migration_order` (PostgreSQL) |
+| `scenario_pipeliner db migrate-plugins` | Apply **plugin** SQL files in `migration_order` (PostgreSQL) for plugins that define migrations |
 | `scenario_pipeliner run` | Opinionated worker: optional migrations → poll/execute existing tasks |
 | `scenario_pipeliner plugin checksum <dir>` | Compute unpacked sha256 for a plugin tree |
 | `scenario_pipeliner plugin checksum <dir> --write` | Write that checksum into existing `plugin.manifest.json` |
@@ -179,7 +182,7 @@ See also [`examples/.env.example`](../examples/.env.example).
 
 ## 7. What `run` / `examples/main.py` do
 
-1. Read env (`RuntimeEnvSettings` + Postgres settings) via `scenario_pipeliner.worker.runtime`.
+1. Load `.env` (CLI) then read env (`RuntimeEnvSettings` + Postgres settings).
 2. Create asyncpg pool.
 3. Optionally apply core + plugin migrations (`RUNNER_APPLY_MIGRATIONS`).
 4. Discover plugins under `SCENARIO_PIPELINER_PLUGINS_ROOT` and enable registered scenarios.
@@ -193,6 +196,14 @@ Plugins that need host DI use `PluginContext.services`:
 `track_documents` can auto-configure from `__shared__.postgres_pool` + Diadoc env vars
 (`API_BASE_URL`, `DIADOC_API_CLIENT_ID`, `DIADOC_BOX_IDS`, `API_TOKEN` or
 `API_USERNAME`/`API_PASSWORD`).
+
+### Plugin layout notes
+
+- Plugins are packages **directly under** `SCENARIO_PIPELINER_PLUGINS_ROOT`
+  (importable as `track_documents`, not `scenario_pipeliner.track_documents`).
+- `core_compat` in `plugin.manifest.json` must include `SCENARIO_PIPELINER_CORE_VERSION`
+  (e.g. library `0.0.2` needs `>=0.0.1,<1.0`, not `>=0.1,<1.0`).
+- Already-exported shell env vars override `.env` (`load_dotenv(override=False)`).
 
 ## 8. Exit codes
 

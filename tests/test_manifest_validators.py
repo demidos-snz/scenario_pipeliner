@@ -34,6 +34,16 @@ def test_manifest_accepts_valid_v1_schema() -> None:
     assert manifest.migrations.migration_order == "20260713120000"
 
 
+def test_manifest_accepts_missing_migrations_section() -> None:
+    payload = _base_manifest()
+    payload.pop("migrations", None)
+
+    manifest = PluginManifestV1.model_validate(payload)
+
+    assert manifest.plugin_name == "acme_docs"
+    assert manifest.migrations is None
+
+
 def test_manifest_rejects_invalid_core_compat() -> None:
     payload = _base_manifest()
     payload["core_compat"] = "not-a-specifier"
