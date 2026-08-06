@@ -32,6 +32,16 @@ uv sync --dev
 
 Installed-from-TestPyPI flow is documented in [docs/CONSUMER.md](docs/CONSUMER.md).
 
+## Lint commands (CI source of truth)
+
+Use exactly the lint commands from `./.github/workflows/ci.yml`:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy .
+```
+
 ## CLI usage (v0)
 
 ```bash

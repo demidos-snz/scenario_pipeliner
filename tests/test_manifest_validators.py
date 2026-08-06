@@ -31,6 +31,7 @@ def _base_manifest() -> dict:
 def test_manifest_accepts_valid_v1_schema() -> None:
     manifest = PluginManifestV1.model_validate(_base_manifest())
     assert manifest.plugin_name == "acme_docs"
+    assert manifest.migrations is not None
     assert manifest.migrations.migration_order == "20260713120000"
 
 
