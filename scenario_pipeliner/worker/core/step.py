@@ -99,9 +99,17 @@ class BaseSubtaskStep[TSubtaskState: TaskState, TStepSettings: StepSettings](
         return []
 
     async def should_run(self, state: TSubtaskState) -> bool:
-        """Run only when the parent step gate passes and ``state.result.ok``."""
+        """Gate linear create-subtask on prior success; always run cyclical polls.
+
+        ``TaskResult.ok`` defaults to ``False``. Linear parent steps must set
+        ``ok=True`` before a tracking subtask is created. Cyclical iterations
+        share the same pipeline but often skip those prior steps, so they must
+        not be blocked by the default ``ok`` value.
+        """
         if not await super().should_run(state=state):
             return False
+        if state.type_task == TaskType.CYCLICAL:
+            return True
         return state.result.ok
 
     async def _run(self, state: TSubtaskState) -> None:

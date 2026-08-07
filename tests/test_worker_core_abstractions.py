@@ -123,12 +123,19 @@ def test_base_subtask_step_dispatches_by_task_type_and_result() -> None:
     cyclical_task.type_task = TaskType.CYCLICAL
     asyncio.run(step.run(cyclical_task))
 
+    # Cyclical polls must run even when result.ok is still the default False
+    # (prior draft steps are skipped for CYCLICAL tasks).
+    cyclical_default_ok = TaskState(task_id=4)
+    cyclical_default_ok.type_task = TaskType.CYCLICAL
+    assert cyclical_default_ok.result.ok is False
+    asyncio.run(step.run(cyclical_default_ok))
+
     skipped_task = TaskState(task_id=3)
     skipped_task.result.ok = False
     asyncio.run(step.run(skipped_task))
 
     assert step.created_calls == 1
-    assert step.run_calls == 1
+    assert step.run_calls == 2
 
 
 def test_pipeline_context_manager_connects_and_disconnects_clients_once() -> None:
