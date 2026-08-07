@@ -26,3 +26,16 @@ class TaskType(StrEnum):
 class EnumDoc(StrEnum):
     XML = "XML"
     JSON = "JSON"
+
+
+class ActiveFlag(StrEnum):
+    """Статус рубильника pipeline_active / pipeline_active_{name}."""
+
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    MISSING = "missing"
+
+    @property
+    def is_active(self) -> bool:
+        """Только явная запись value=1; MISSING трактуется как inactive."""
+        return self is ActiveFlag.ACTIVE
