@@ -71,6 +71,17 @@ class _FakePool:
         return _FakeAcquireCtx(self._conn)
 
 
+def test_parse_payload_accepts_json_null_and_empty() -> None:
+    assert PostgresTaskRepository._parse_payload(None) is None
+    assert PostgresTaskRepository._parse_payload("null") is None
+    assert PostgresTaskRepository._parse_payload("  null  ") is None
+    assert PostgresTaskRepository._parse_payload("") is None
+    assert PostgresTaskRepository._parse_payload("   ") is None
+    payload = PostgresTaskRepository._parse_payload('{"type_doc":"JSON","data":["{}"]}')
+    assert payload is not None
+    assert payload.primary == "{}"
+
+
 def test_postgres_repository_fetch_batch_maps_rows() -> None:
     conn = _FakeConnection()
     conn.fetch_rows = [

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
@@ -422,12 +423,21 @@ class PostgresTaskRepository(TaskRepository):
 
     @staticmethod
     def _parse_payload(value: object) -> TaskPayload | None:
+        """Parse tasks.payload from asyncpg (JSONB dict, text, or JSON null)."""
         if value is None:
             return None
         if isinstance(value, TaskPayload):
             return value
-        if isinstance(value, str):
-            return TaskPayload.model_validate_json(value)
         if isinstance(value, dict):
             return TaskPayload.model_validate(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped == "null":
+                return None
+            parsed: object = json.loads(stripped)
+            if parsed is None:
+                return None
+            if isinstance(parsed, dict):
+                return TaskPayload.model_validate(parsed)
+            return None
         return None
