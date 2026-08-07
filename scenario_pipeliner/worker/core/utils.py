@@ -12,12 +12,20 @@ def get_params_for_cyclical_task(
     status: str,
     state: TaskState,
 ) -> tuple[str, int, datetime.datetime | None]:
+    """Adjust status/executions for cyclical tasks.
+
+    Incomplete iterations (not ``FINISHED``) are requeued as ``NEW`` until
+    ``max_executions`` is reached. Successful ``FINISHED`` stays terminal so
+    blocking subtasks can complete their parents.
+    """
     current_executions: int = state.current_executions
     next_run_at: datetime.datetime | None = None
 
     if state.type_task == TaskType.CYCLICAL:
         current_executions += 1
-        if state.max_executions is None or current_executions < state.max_executions:
+        if status != TaskStatus.FINISHED.value and (
+            state.max_executions is None or current_executions < state.max_executions
+        ):
             status = TaskStatus.NEW.value
             if state.interval_seconds is not None:
                 next_run_at = datetime.datetime.now() + datetime.timedelta(

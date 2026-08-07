@@ -151,8 +151,9 @@ def test_postgres_repository_persists_cyclical_retry() -> None:
     assert update_args[-2] is not None
 
 
-def test_postgres_repository_persists_cyclical_success_requeue() -> None:
+def test_postgres_repository_persists_cyclical_success_as_finished() -> None:
     conn = _FakeConnection()
+    conn.fetchrow_result = {"pending_blocking": 0, "failed_non_blocking": 0}
     repository = PostgresTaskRepository(
         storage=PostgresTaskStorage(pool=_FakePool(conn))
     )
@@ -169,12 +170,13 @@ def test_postgres_repository_persists_cyclical_success_requeue() -> None:
 
     asyncio.run(repository.persist_task_result(task))
 
-    assert len(conn.executed) >= 2
-    _, update_args = conn.executed[1]
-    assert update_args[0] == "NEW"
-    assert update_args[1] == 3
-    assert update_args[-1] == 12
-    assert update_args[-2] is not None
+    update_queries = [
+        args for query, args in conn.executed if query.startswith("UPDATE")
+    ]
+    assert update_queries
+    assert update_queries[0][0] == "FINISHED"
+    assert update_queries[0][1] == 3
+    assert update_queries[0][-1] == 12
 
 
 def test_count_parent_subtasks_state_uses_dense_placeholders() -> None:
