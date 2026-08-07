@@ -9,25 +9,35 @@ from scenario_pipeliner.worker.core.states import BaseState, TaskState
 
 
 class AsyncStep[TStepState: BaseState, TStepSettings: StepSettings](ABC):
+    """Async processing step in a pipeline."""
+
     def __init__(self, settings: TStepSettings):
         self.settings = settings
         self.initialized: bool = False
         self.is_custom: bool = False
 
     async def initialize(self) -> None:
+        """Mark the step as ready and run subclass setup hooks."""
         self.initialized = True
         await self._on_initialize()
 
     async def _on_initialize(self) -> None:
-        return
+        """Optional subclass hook invoked during initialize()."""
 
     @property
     @abstractmethod
     def clients(self) -> list[AsyncClient]:
+        """Clients owned or used by this step."""
         return []
 
     @final
     async def run(self, state: TStepState) -> None:
+        """Execute the step when should_run() allows it.
+
+        Raises:
+            PipelineCancelledError: If the task was cancelled before or after
+                ``_run``.
+        """
         if not await self.should_run(state=state):
             return
 
@@ -45,38 +55,55 @@ class AsyncStep[TStepState: BaseState, TStepSettings: StepSettings](ABC):
 
     @abstractmethod
     async def _run(self, state: TStepState) -> None:
-        pass
+        """Core step logic implemented by subclasses."""
 
     async def finalize(self) -> None:
+        """Tear down the step and clear the initialized flag."""
         await self._on_finalize()
         self.initialized = False
 
     async def _on_finalize(self) -> None:
-        return
+        """Optional subclass hook invoked during finalize()."""
 
     async def should_run(self, state: TStepState) -> bool:
+        """Return whether this step should execute for the given state.
+
+        Raises:
+            PipelineCancelledError: If the task is already cancelled.
+        """
         if state.is_cancelled:
             raise PipelineCancelledError(
                 f"Step {self.__class__.__name__} cancelled before start"
             )
         return True
 
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}".lower()
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}".lower()
+
 
 class BaseSubtaskStep[TSubtaskState: TaskState, TStepSettings: StepSettings](
     AsyncStep[TSubtaskState, TStepSettings],
     ABC,
 ):
+    """Step that creates a subtask once, then runs cyclical subtask work."""
+
     @property
     @abstractmethod
     def clients(self) -> list[AsyncClient]:
+        """Clients owned or used by this step."""
         return []
 
     async def should_run(self, state: TSubtaskState) -> bool:
+        """Run only when the parent step gate passes and ``state.result.ok``."""
         if not await super().should_run(state=state):
             return False
         return state.result.ok
 
     async def _run(self, state: TSubtaskState) -> None:
+        """Create a subtask for linear tasks; otherwise execute subtask logic."""
         if state.type_task != TaskType.CYCLICAL:
             await self._create_subtask(state=state)
         else:
@@ -84,8 +111,8 @@ class BaseSubtaskStep[TSubtaskState: TaskState, TStepSettings: StepSettings](
 
     @abstractmethod
     async def _create_subtask(self, state: TSubtaskState) -> None:
-        pass
+        """Create the tracking or child subtask for a parent task."""
 
     @abstractmethod
     async def _run_subtask(self, state: TSubtaskState) -> None:
-        pass
+        """Execute one cyclical iteration of the subtask."""
