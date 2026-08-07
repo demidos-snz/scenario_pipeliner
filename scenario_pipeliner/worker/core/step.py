@@ -23,6 +23,7 @@ class AsyncStep[TStepState: BaseState, TStepSettings: StepSettings](ABC):
 
     async def _on_initialize(self) -> None:
         """Optional subclass hook invoked during initialize()."""
+        return None
 
     @property
     @abstractmethod
@@ -64,6 +65,7 @@ class AsyncStep[TStepState: BaseState, TStepSettings: StepSettings](ABC):
 
     async def _on_finalize(self) -> None:
         """Optional subclass hook invoked during finalize()."""
+        return None
 
     async def should_run(self, state: TStepState) -> bool:
         """Return whether this step should execute for the given state.
