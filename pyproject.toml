@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scenario_pipeliner"
+dynamic = ["version"]
+description = "Plugin-based scenario migration planner and core DB migrator"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "demidos-snz" },
+]
+license = "BSD-3-Clause"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+keywords = ["plugins", "migrations", "alembic", "worker", "pipeline"]
+dependencies = [
+    "aio-pika>=10.0.1",
+    "aiosqlite>=0.22.1",
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "httpx>=0.28.1",
+    "packaging>=24.2",
+    "psycopg[binary]>=3.3.5",
+    "pydantic>=2.11.0",
+    "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.0.0",
+    "sqlalchemy>=2.0.51",
+]
+
+[project.optional-dependencies]
+sentry = ["sentry-sdk>=2.64.0"]
+
+[project.scripts]
+scenario_pipeliner = "scenario_pipeliner.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/demidos-snz/scenario_pipeliner"
+Documentation = "https://github.com/demidos-snz/scenario_pipeliner#readme"
+Issues = "https://github.com/demidos-snz/scenario_pipeliner/issues"
+Repository = "https://github.com/demidos-snz/scenario_pipeliner.git"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.0",
+    "pre-commit>=4.3.0",
+    "pytest>=9.0.3",
+    "ruff>=0.15.12",
+    "sentry-sdk>=2.64.0",
+    "twine>=6.2.0",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "scenario_pipeliner.version.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scenario_pipeliner*"]
+exclude = ["scenario_pipeliner.tests*"]
+
+[tool.setuptools.package-data]
+scenario_pipeliner = ["py.typed", "core_migrations/*.mako"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+src = ["."]
+exclude = [".venv", "__pycache__", "dist", "plugins"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",
+    "UP037",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+mypy_path = ["."]
+files = ["scenario_pipeliner", "examples/main.py", "tests"]
+exclude = ["\\.venv/", "plugins/", "examples/plugins/", "dist/"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg", "sentry_sdk", "sentry_sdk.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
