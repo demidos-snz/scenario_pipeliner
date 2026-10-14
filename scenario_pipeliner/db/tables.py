@@ -34,7 +34,6 @@ def _schema_enum(schema: str, name: str, values: tuple[str, ...]) -> ENUM:
         *values,
         name=name,
         schema=schema,
-        inherit_schema=True,
         create_type=False,
     )
 
