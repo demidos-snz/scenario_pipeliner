@@ -26,6 +26,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   cannot mark the row sent or return it to `PENDING`.
 - Cyclical success requeues until `max_executions`. Failure and cancel stay
   terminal.
+- CI and publish jobs install Python 3.13. `greenlet` is a direct dependency,
+  so the async SQLAlchemy engine imports even when the platform marker skips it.
 
 ### Added
 - `AsyncClient.ping`. The broker loop pings before reconcile and reconnects
