@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from scenario_pipeliner.db.schema_utils import run_with_identity_sequence_retry
 from scenario_pipeliner.db.settings import CoreDb
+from scenario_pipeliner.db.tables import DEFAULT_INTERVAL_SECONDS
 from scenario_pipeliner.worker.broker.enums import BrokerOutboxStatus
 from scenario_pipeliner.worker.broker.exceptions import DuplicateBrokerMessage
 from scenario_pipeliner.worker.broker.settings import (
@@ -97,7 +98,7 @@ async def insert_linear_task_with_ingress(
                         status=TaskStatus.NEW.value,
                         source=TaskSource.RABBITMQ.value,
                         type_task=TaskType.LINEAR.value,
-                        interval_seconds=1,
+                        interval_seconds=DEFAULT_INTERVAL_SECONDS,
                         max_executions=draft.max_executions,
                         current_executions=0,
                         payload=payload,
@@ -248,7 +249,8 @@ async def claim_pending_outbox(
     """Atomically claim PENDING (and stale PROCESSING) rows.
 
     Sets ``status=PROCESSING`` with ``FOR UPDATE SKIP LOCKED`` so two broker
-    processes cannot pick the same row. ``PROCESSING`` older than
+    processes cannot pick the same row, and increments ``claim_token``. Later
+    updates must pass that token. ``PROCESSING`` older than
     ``stale_processing_minutes`` is treated as abandoned after a crash.
     Default lease matches ``PluginBrokerSettings.stale_processing_minutes``.
     """
@@ -277,6 +279,7 @@ async def claim_pending_outbox(
         .where(outbox.c.id.in_(inner))
         .values(
             status=BrokerOutboxStatus.PROCESSING.value,
+            claim_token=outbox.c.claim_token + 1,
             updated_at=func.now(),
         )
         .returning(
@@ -289,6 +292,7 @@ async def claim_pending_outbox(
             outbox.c.routing_queues,
             outbox.c.headers,
             outbox.c.attempt_count,
+            outbox.c.claim_token,
         )
     )
     async with db.engine.begin() as conn:
@@ -405,38 +409,42 @@ async def load_task_result_ingress(
     )
 
 
-async def mark_outbox_skipped(db: CoreDb, *, outbox_id: int) -> None:
+def _owned_processing(outbox: Any, *, outbox_id: int, claim_token: int) -> Any:
+    return and_(
+        outbox.c.id == outbox_id,
+        outbox.c.status == BrokerOutboxStatus.PROCESSING.value,
+        outbox.c.claim_token == claim_token,
+    )
+
+
+async def mark_outbox_skipped(db: CoreDb, *, outbox_id: int, claim_token: int) -> bool:
     outbox = db.core.broker_outbox
     async with db.engine.begin() as conn:
-        await conn.execute(
+        result = await conn.execute(
             update(outbox)
             .where(
-                and_(
-                    outbox.c.id == outbox_id,
-                    outbox.c.status == BrokerOutboxStatus.PROCESSING.value,
-                )
+                _owned_processing(outbox, outbox_id=outbox_id, claim_token=claim_token)
             )
             .values(status=BrokerOutboxStatus.SKIPPED.value, updated_at=func.now())
         )
+    return int(result.rowcount or 0) == 1
 
 
 async def store_outbox_reply(
     db: CoreDb,
     *,
     outbox_id: int,
+    claim_token: int,
     draft: ReplyDraft,
     routing_queues: list[str],
-) -> None:
+) -> bool:
     outbox = db.core.broker_outbox
     content_type = draft.content_type or "application/json"
     async with db.engine.begin() as conn:
-        await conn.execute(
+        result = await conn.execute(
             update(outbox)
             .where(
-                and_(
-                    outbox.c.id == outbox_id,
-                    outbox.c.status == BrokerOutboxStatus.PROCESSING.value,
-                )
+                _owned_processing(outbox, outbox_id=outbox_id, claim_token=claim_token)
             )
             .values(
                 body=draft.body,
@@ -446,18 +454,16 @@ async def store_outbox_reply(
                 updated_at=func.now(),
             )
         )
+    return int(result.rowcount or 0) == 1
 
 
-async def mark_outbox_sent(db: CoreDb, *, outbox_id: int) -> None:
+async def mark_outbox_sent(db: CoreDb, *, outbox_id: int, claim_token: int) -> bool:
     outbox = db.core.broker_outbox
     async with db.engine.begin() as conn:
-        await conn.execute(
+        result = await conn.execute(
             update(outbox)
             .where(
-                and_(
-                    outbox.c.id == outbox_id,
-                    outbox.c.status == BrokerOutboxStatus.PROCESSING.value,
-                )
+                _owned_processing(outbox, outbox_id=outbox_id, claim_token=claim_token)
             )
             .values(
                 status=BrokerOutboxStatus.SENT.value,
@@ -465,24 +471,23 @@ async def mark_outbox_sent(db: CoreDb, *, outbox_id: int) -> None:
                 updated_at=func.now(),
             )
         )
+    return int(result.rowcount or 0) == 1
 
 
 async def mark_outbox_publish_failure(
     db: CoreDb,
     *,
     outbox_id: int,
+    claim_token: int,
     error: str,
     max_attempts: int = 10,
-) -> None:
+) -> bool:
     outbox = db.core.broker_outbox
     async with db.engine.begin() as conn:
-        await conn.execute(
+        result = await conn.execute(
             update(outbox)
             .where(
-                and_(
-                    outbox.c.id == outbox_id,
-                    outbox.c.status == BrokerOutboxStatus.PROCESSING.value,
-                )
+                _owned_processing(outbox, outbox_id=outbox_id, claim_token=claim_token)
             )
             .values(
                 attempt_count=outbox.c.attempt_count + 1,
@@ -503,3 +508,4 @@ async def mark_outbox_publish_failure(
                 updated_at=func.now(),
             )
         )
+    return int(result.rowcount or 0) == 1

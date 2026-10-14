@@ -47,6 +47,7 @@ class BrokerRunner:
         self.runner_settings = runner_settings or RunnerBrokerSettings()
         self._stop = asyncio.Event()
         self._client: AsyncRabbitMQClient | None = None
+        self._consuming = False
 
     def stop(self) -> None:
         self._stop.set()
@@ -98,16 +99,34 @@ class BrokerRunner:
             async def _nack(requeue: bool) -> None:
                 await message.nack(requeue=requeue)
 
-            await process_ingress_message(
-                db=self.db,
-                plugin_name=binding.plugin_name,
-                hooks=self._hooks_for_queue(queue_name, binding),
-                raw=raw,
-                meta=meta,
-                ack=_ack,
-                nack=_nack,
-                max_ingress_retries=binding.settings.max_ingress_retries,
-            )
+            try:
+                await asyncio.wait_for(
+                    process_ingress_message(
+                        db=self.db,
+                        plugin_name=binding.plugin_name,
+                        hooks=self._hooks_for_queue(queue_name, binding),
+                        raw=raw,
+                        meta=meta,
+                        ack=_ack,
+                        nack=_nack,
+                        max_ingress_retries=binding.settings.max_ingress_retries,
+                    ),
+                    timeout=self.runner_settings.INGRESS_HANDLER_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.error(
+                    "broker ingress timed out plugin=%s queue=%s",
+                    binding.plugin_name,
+                    queue_name,
+                )
+                try:
+                    await message.nack(requeue=True)
+                except Exception:
+                    logger.exception(
+                        "broker ingress timeout nack failed plugin=%s queue=%s",
+                        binding.plugin_name,
+                        queue_name,
+                    )
 
         return _on_message
 
@@ -134,22 +153,28 @@ class BrokerRunner:
 
         prefetch = max(item.settings.prefetch_count for item in self.bindings)
         client = AsyncRabbitMQClient(settings=self.rabbit_settings)
-        await client.connect_with_qos(prefetch_count=prefetch)
-        self._client = client
-        owners = self._queue_owners()
-        for queue_name, binding in owners.items():
-            await client.consume_unacked(
-                queue_name, self._make_ingress_callback(queue_name, binding)
-            )
-        logger.info(
-            "broker runner started plugins=%s queues=%s prefetch=%s",
-            ",".join(sorted({item.plugin_name for item in self.bindings})),
-            ",".join(sorted(owners)),
-            prefetch,
-        )
+        failures = 0
+        limit = self.runner_settings.PING_FAILURE_LIMIT
 
         try:
+            await self._start_client(client, prefetch)
             while not self._stop.is_set():
+                try:
+                    await self._ensure_broker_alive(client, prefetch)
+                except Exception:
+                    failures += 1
+                    logger.exception(
+                        "broker restore failed (%s/%s)",
+                        failures,
+                        limit,
+                    )
+                    if failures >= limit:
+                        raise
+                    await asyncio.sleep(self.runner_settings.POLL_INTERVAL_SECONDS)
+                    continue
+                failures = 0
+                if self._stop.is_set():
+                    break
                 await reconcile_terminal_broker_tasks(
                     self.db, limit=self.runner_settings.RECONCILE_LIMIT
                 )
@@ -162,8 +187,64 @@ class BrokerRunner:
                 )
                 await asyncio.sleep(self.runner_settings.POLL_INTERVAL_SECONDS)
         finally:
-            await client.disconnect()
+            await self._abandon(client)
             self._client = None
+
+    def _restore_timeout(self) -> int:
+        queues = sum(len(item.settings.input_queues) for item in self.bindings)
+        return self.rabbit_settings.RABBITMQ_CONNECT_TIMEOUT_SECONDS + (
+            self.rabbit_settings.RABBITMQ_PING_TIMEOUT_SECONDS * max(queues, 1)
+        )
+
+    async def _start_client(self, client: AsyncRabbitMQClient, prefetch: int) -> None:
+        self._consuming = False
+        await client.connect_with_qos(prefetch_count=prefetch)
+        self._client = client
+        owners = self._queue_owners()
+        for queue_name, binding in owners.items():
+            await client.consume_unacked(
+                queue_name, self._make_ingress_callback(queue_name, binding)
+            )
+        self._consuming = True
+        logger.info(
+            "broker runner started plugins=%s queues=%s prefetch=%s",
+            ",".join(sorted({item.plugin_name for item in self.bindings})),
+            ",".join(sorted(owners)),
+            prefetch,
+        )
+
+    async def _abandon(self, client: AsyncRabbitMQClient) -> None:
+        self._consuming = False
+        try:
+            await asyncio.wait_for(
+                client.disconnect(),
+                timeout=self.rabbit_settings.RABBITMQ_PING_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.warning(
+                "broker disconnect did not finish; dropping the client",
+                exc_info=True,
+            )
+            client.drop()
+
+    async def _reconnect(self, client: AsyncRabbitMQClient, prefetch: int) -> None:
+        await self._abandon(client)
+        await asyncio.wait_for(
+            self._start_client(client, prefetch),
+            timeout=self._restore_timeout(),
+        )
+
+    async def _ensure_broker_alive(
+        self, client: AsyncRabbitMQClient, prefetch: int
+    ) -> None:
+        try:
+            if self._consuming:
+                await client.ping()
+                return
+        except Exception:
+            logger.warning("broker ping failed; reconnecting", exc_info=True)
+        await self._reconnect(client, prefetch)
+        await client.ping()
 
     @staticmethod
     def _make_publish(client: AsyncRabbitMQClient):

@@ -95,6 +95,7 @@ class DBExecutionOrchestrator:
             poller = self._default_runtime_poller(
                 state=state,
                 active_task_ids=active_task_ids,
+                task_cancel_events=task_cancel_events,
                 on_cancel=_cancel_execution_batch,
             )
             poll_task = poller.start()
@@ -189,10 +190,19 @@ class DBExecutionOrchestrator:
         *,
         state: ExecutionBatchState,
         active_task_ids: set[int],
+        task_cancel_events: dict[int, asyncio.Event],
         on_cancel: Callable[[], None],
     ) -> ActiveFlagPoller:
         control = self._runtime_control
         assert control is not None
+
+        def _cancel_scenario_tasks(scenario: str) -> None:
+            for task in state.tasks:
+                if task.scenario != scenario or task.task_id not in active_task_ids:
+                    continue
+                event = task_cancel_events.get(task.task_id)
+                if event is not None:
+                    event.set()
 
         async def check_main() -> bool:
             if await control.is_worker_enabled():
@@ -208,9 +218,13 @@ class DBExecutionOrchestrator:
                 if task.scenario in seen:
                     continue
                 seen.add(task.scenario)
-                if not await control.is_scenario_active(task.scenario):
-                    on_cancel()
-                    return
+                if await control.is_scenario_active(task.scenario):
+                    continue
+                logger.warning(
+                    "Scenario %s paused; cancelling its in-flight tasks",
+                    task.scenario,
+                )
+                _cancel_scenario_tasks(task.scenario)
 
         async def check_tasks() -> None:
             await control.touch_heartbeats(tuple(active_task_ids))

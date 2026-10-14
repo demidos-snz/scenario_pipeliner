@@ -11,6 +11,10 @@ from scenario_pipeliner.base_settings import FrozenSettings
 from scenario_pipeliner.worker.core.settings import Settings
 from scenario_pipeliner.worker.core.states import TaskPayload
 
+DEFAULT_PREFETCH_COUNT = 10
+DEFAULT_STALE_PROCESSING_MINUTES = 15
+DEFAULT_MAX_INGRESS_RETRIES = 3
+
 
 class PluginBrokerSettings(Settings):
     """Queue bindings and knobs for one plugin's broker participation."""
@@ -18,9 +22,9 @@ class PluginBrokerSettings(Settings):
     input_queues: list[str] = Field(default_factory=list)
     output_queues: list[str] = Field(default_factory=list)
     queue_bindings: dict[str, str] = Field(default_factory=dict)
-    prefetch_count: int = Field(default=10, ge=1, le=1000)
+    prefetch_count: int = Field(default=DEFAULT_PREFETCH_COUNT, ge=1, le=1000)
     stale_processing_minutes: int = Field(
-        default=15,
+        default=DEFAULT_STALE_PROCESSING_MINUTES,
         ge=1,
         le=1440,
         description=(
@@ -28,7 +32,7 @@ class PluginBrokerSettings(Settings):
             "(not per plugin); several plugins share the shortest value."
         ),
     )
-    max_ingress_retries: int = Field(default=3, ge=1, le=5)
+    max_ingress_retries: int = Field(default=DEFAULT_MAX_INGRESS_RETRIES, ge=1, le=5)
     enabled: bool = True
 
     @classmethod
@@ -42,7 +46,7 @@ class PluginBrokerSettings(Settings):
         default).
         """
         if not settings_by_plugin:
-            return int(cls.model_fields["stale_processing_minutes"].default)
+            return DEFAULT_STALE_PROCESSING_MINUTES
         return min(
             item.stale_processing_minutes for item in settings_by_plugin.values()
         )

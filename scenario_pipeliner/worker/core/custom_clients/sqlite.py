@@ -36,6 +36,24 @@ class AsyncSQLiteClient(AsyncDBClient[list[tuple[Any, ...]], SQLiteClientSetting
         await super().check_connection()
         assert self.connection is not None
 
+    async def ping(self) -> None:
+        """Run ``SELECT 1`` on the open connection."""
+        await self.check_connection()
+        try:
+            await asyncio.wait_for(
+                self._select_one(),
+                timeout=self.settings.SQLITE_PING_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Database ping failed") from exc
+
+    async def _select_one(self) -> None:
+        assert self.connection is not None
+        async with self._lock, self.connection.execute("SELECT 1") as cursor:
+            await cursor.fetchone()
+
     async def receive(
         self, query: str, parameters: tuple[Any, ...] | list[Any] | None = None
     ) -> list[tuple[Any, ...]]:

@@ -22,6 +22,16 @@ from scenario_pipeliner.db.schemes_names import DEFAULT_DB_SCHEMA, validate_sche
 from scenario_pipeliner.db.settings import PostgresPoolSettings, PostgresUrls
 from scenario_pipeliner.version import __version__
 from scenario_pipeliner.worker.core.settings import (
+    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    DEFAULT_INGRESS_HANDLER_TIMEOUT_SECONDS,
+    DEFAULT_MAX_CONCURRENT_TASKS,
+    DEFAULT_OUTBOX_LIMIT,
+    DEFAULT_PING_FAILURE_LIMIT,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_RECONCILE_LIMIT,
+    DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+    DEFAULT_TASKS_LIMIT,
+    DEFAULT_ZOMBIE_TASKS_TIMEOUT_MINUTES,
     RunnerBrokerSettings,
     RunnerDBSettings,
 )
@@ -67,13 +77,13 @@ class RuntimeEnvSettings(BaseSettings):
         validation_alias="SCENARIO_PIPELINER_DB_SCHEMA",
     )
     runner_poll_interval_seconds: int = Field(
-        default=2,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
         ge=1,
         le=3600,
         validation_alias="RUNNER_POLL_INTERVAL_SECONDS",
     )
     runner_shutdown_timeout_seconds: int = Field(
-        default=30,
+        default=DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
         ge=1,
         le=600,
         validation_alias=AliasChoices(
@@ -82,40 +92,52 @@ class RuntimeEnvSettings(BaseSettings):
         ),
     )
     runner_tasks_limit: int = Field(
-        default=10,
+        default=DEFAULT_TASKS_LIMIT,
         ge=1,
         le=1000,
         validation_alias="RUNNER_TASKS_LIMIT",
     )
     runner_zombie_tasks_timeout_minutes: int = Field(
-        default=30,
+        default=DEFAULT_ZOMBIE_TASKS_TIMEOUT_MINUTES,
         ge=1,
         le=1440,
         validation_alias="RUNNER_ZOMBIE_TASKS_TIMEOUT_MINUTES",
     )
     runner_max_concurrent_tasks: int = Field(
-        default=5,
+        default=DEFAULT_MAX_CONCURRENT_TASKS,
         ge=1,
         le=1000,
         validation_alias="RUNNER_MAX_CONCURRENT_TASKS",
     )
     runner_heartbeat_interval_seconds: int = Field(
-        default=30,
+        default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
         ge=1,
         le=3600,
         validation_alias="RUNNER_HEARTBEAT_INTERVAL_SECONDS",
     )
     runner_reconcile_limit: int = Field(
-        default=50,
+        default=DEFAULT_RECONCILE_LIMIT,
         ge=1,
         le=1000,
         validation_alias="RUNNER_RECONCILE_LIMIT",
     )
     runner_outbox_limit: int = Field(
-        default=20,
+        default=DEFAULT_OUTBOX_LIMIT,
         ge=1,
         le=1000,
         validation_alias="RUNNER_OUTBOX_LIMIT",
+    )
+    runner_ingress_handler_timeout_seconds: int = Field(
+        default=DEFAULT_INGRESS_HANDLER_TIMEOUT_SECONDS,
+        gt=0,
+        le=3600,
+        validation_alias="RUNNER_INGRESS_HANDLER_TIMEOUT_SECONDS",
+    )
+    runner_broker_ping_failure_limit: int = Field(
+        default=DEFAULT_PING_FAILURE_LIMIT,
+        ge=1,
+        le=100,
+        validation_alias="RUNNER_BROKER_PING_FAILURE_LIMIT",
     )
     run_seconds: Annotated[int | None, BeforeValidator(_empty_str_as_none)] = Field(
         default=None,
@@ -188,6 +210,8 @@ class RuntimeEnvSettings(BaseSettings):
             SHUTDOWN_TIMEOUT_SECONDS=self.runner_shutdown_timeout_seconds,
             RECONCILE_LIMIT=self.runner_reconcile_limit,
             OUTBOX_LIMIT=self.runner_outbox_limit,
+            INGRESS_HANDLER_TIMEOUT_SECONDS=self.runner_ingress_handler_timeout_seconds,
+            PING_FAILURE_LIMIT=self.runner_broker_ping_failure_limit,
         )
 
 

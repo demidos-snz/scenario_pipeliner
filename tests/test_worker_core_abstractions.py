@@ -43,6 +43,9 @@ class _DummyClient(AsyncClient):
     async def receive(self, *args, **kwargs) -> dict[str, str] | None:
         return None
 
+    async def ping(self) -> None:
+        await self.check_connection()
+
 
 @dataclass
 class _RecorderState(BaseState):
@@ -189,9 +192,22 @@ def test_cyclical_retry_next_run_at_is_timezone_aware() -> None:
         current_executions=0,
     )
     status, executions, next_run_at = get_params_for_cyclical_task(
-        TaskStatus.FAILED, task
+        TaskStatus.FINISHED, task
     )
     assert status is TaskStatus.NEW
     assert executions == 1
     assert next_run_at is not None
     assert next_run_at.tzinfo is UTC
+
+    failed, failed_executions, failed_next = get_params_for_cyclical_task(
+        TaskStatus.FAILED, task
+    )
+    assert failed is TaskStatus.FAILED
+    assert failed_executions == 1
+    assert failed_next is None
+
+    cancelled, _, cancelled_next = get_params_for_cyclical_task(
+        TaskStatus.CANCELLED, task
+    )
+    assert cancelled is TaskStatus.CANCELLED
+    assert cancelled_next is None

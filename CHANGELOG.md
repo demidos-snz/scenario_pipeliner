@@ -7,6 +7,42 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-10-14
+
+### Fixed
+- A blocking child that failed before the parent reached `WAITING` fails the
+  parent on the root's successful persist and cancels open siblings in that
+  transaction.
+- `mark_task_running` updates only a `QUEUED` row, so a cancel that already
+  landed is not overwritten by `RUNNING`.
+- Ingress persist errors and hook retries share `max_ingress_retries`. A
+  classic queue without `x-delivery-count` or `x-death` stops on the redelivery.
+- A dead broker task stops the process (`scenario_pipeliner run` exits 1).
+- Soft-deleted children are omitted from parent rollup and sibling cancel.
+- Pausing one scenario cancels only that scenario's in-flight tasks.
+- Any active-flag poller error cancels the batch. Heartbeats are not skipped
+  while the batch keeps running.
+- Outbox completion requires the `claim_token` from the claim. A stale worker
+  cannot mark the row sent or return it to `PENDING`.
+- Cyclical success requeues until `max_executions`. Failure and cancel stay
+  terminal.
+
+### Added
+- `AsyncClient.ping`. The broker loop pings before reconcile and reconnects
+  with QoS and consumers after a failed ping (`PING_FAILURE_LIMIT`, default 3).
+- Bounded ingress handler timeout, Postgres connect/command timeouts, and
+  `statement_timeout` on both pools.
+- Alembic `0002_outbox_claim_token` (`broker_outbox.claim_token`).
+- Status map: `docs/TASK_STATUS.md`, `docs/TASK_STATUS.ru.md`.
+
+### Changed
+- Package version `0.0.2`. `plugin init` `core_compat` default is
+  `>=0.0.2,<1.0`.
+- Runner numeric defaults are shared constants. `POLL_INTERVAL_SECONDS`
+  default is 2. Configured timeouts are `int`.
+- `tasks.interval_seconds` server default, `task create --interval-seconds`,
+  and task seeds share `DEFAULT_INTERVAL_SECONDS` (`1`).
+
 ## [0.0.1] - 2026-09-10
 
 First public PyPI release. Plugins are **not** bundled in the wheel.

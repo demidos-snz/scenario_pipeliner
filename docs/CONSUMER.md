@@ -370,11 +370,12 @@ Changing the env schema without a data migration can still create a **second emp
 install** in the new schema (known limitation).
 
 `tasks.type_task` defaults to `LINEAR`. Omitting it on ad-hoc INSERT does not
-create a 1s cyclical task. Core schema is a single Alembic revision
-`0001_core_tables` (all library tables and enums). Later changes need a new
-revision with `ALTER`. `table.create(checkfirst=True)` is only for bootstrapping
-missing tables. If `{schema}.alembic_version` still has `0002`–`0007` from an
-older wheel, stamp `0001_core_tables` (do not re-run upgrade from empty).
+create a 1s cyclical task. Core schema: `0001_core_tables` creates the tables
+and enums, `0002_outbox_claim_token` adds `broker_outbox.claim_token`. Later
+changes need a new revision with `ALTER`. `table.create(checkfirst=True)` is
+only for bootstrapping missing tables. If `{schema}.alembic_version` still has
+`0002`–`0007` from an older wheel, stamp `0001_core_tables` (do not re-run
+upgrade from empty).
 
 `tasks.deleted_at` is a soft-delete marker. When set, the DB worker does not
 lock the row (`lock_runnable_tasks`) and outbox reconcile skips it. Nothing in
@@ -385,11 +386,13 @@ the library writes `deleted_at` yet; host SQL can.
 
 While a task is `QUEUED`/`RUNNING`, the stock runner refreshes
 `last_heartbeat_at` every `RUNNER_HEARTBEAT_INTERVAL_SECONDS`. Another worker may reclaim the row only after
-`RUNNER_ZOMBIE_TASKS_TIMEOUT_MINUTES` without a heartbeat. Pause / kill-switch (`worker_enabled=0` or
-`pipeline_active_{scenario}=0`) skips lock and cancels in-flight work as
-`CANCELLED`. Process SIGTERM is different: wait
+`RUNNER_ZOMBIE_TASKS_TIMEOUT_MINUTES` without a heartbeat. Kill-switch
+`worker_enabled=0` skips new locks and cancels the whole in-flight batch as
+`CANCELLED`. Pause `pipeline_active_{scenario}=0` skips locks for that scenario
+and cancels only its in-flight tasks; other scenarios in the batch continue.
+Process SIGTERM is different: wait
 `RUNNER_SHUTDOWN_TIMEOUT_SECONDS`, then requeue leftover in-flight rows as
-`NEW` with heartbeat cleared (no extra `results` row). A database error while reading those flags or touching heartbeats
+`NEW` with heartbeat cleared (no extra `results` row). Any poller error while reading those flags or touching heartbeats
 cancels the in-flight batch (fail-closed).
 
 Plugin SQL is rendered at apply time. Both `{{core_schema}}` and `{{plugin_schema}}`

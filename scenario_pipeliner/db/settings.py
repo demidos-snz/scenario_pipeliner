@@ -11,6 +11,8 @@ from scenario_pipeliner.base_settings import FrozenSettings, Settings
 
 DEFAULT_DB_POOL_MIN_SIZE = 1
 DEFAULT_DB_POOL_MAX_SIZE = 5
+DEFAULT_DB_CONNECT_TIMEOUT_SECONDS = 10
+DEFAULT_DB_COMMAND_TIMEOUT_SECONDS = 60
 
 
 def check_pool_bounds(min_size: int, max_size: int) -> None:
@@ -29,6 +31,8 @@ def sqlalchemy_pool_params(min_size: int, max_size: int) -> tuple[int, int]:
 class PostgresPoolKwargs(TypedDict):
     min_size: int
     max_size: int
+    connect_timeout: int
+    command_timeout: int
 
 
 class PostgresPoolSettings(Settings):
@@ -36,6 +40,16 @@ class PostgresPoolSettings(Settings):
 
     DB_POOL_MIN_SIZE: int = Field(default=DEFAULT_DB_POOL_MIN_SIZE, ge=1, le=10)
     DB_POOL_MAX_SIZE: int = Field(default=DEFAULT_DB_POOL_MAX_SIZE, ge=1, le=10)
+    DB_CONNECT_TIMEOUT_SECONDS: int = Field(
+        default=DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
+        ge=1,
+        le=120,
+    )
+    DB_COMMAND_TIMEOUT_SECONDS: int = Field(
+        default=DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
+        ge=1,
+        le=3600,
+    )
 
     @model_validator(mode="after")
     def validate_pool_bounds(self) -> Self:
@@ -47,6 +61,8 @@ class PostgresPoolSettings(Settings):
         return {
             "min_size": self.DB_POOL_MIN_SIZE,
             "max_size": self.DB_POOL_MAX_SIZE,
+            "connect_timeout": self.DB_CONNECT_TIMEOUT_SECONDS,
+            "command_timeout": self.DB_COMMAND_TIMEOUT_SECONDS,
         }
 
 

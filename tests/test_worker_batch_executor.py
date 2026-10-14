@@ -32,14 +32,14 @@ def test_batch_executor_raises_cancelled_on_timeout_and_calls_hook() -> None:
     hooks = {"timeout": 0}
 
     async def slow_worker() -> None:
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(5)
 
     async def on_timeout() -> None:
         hooks["timeout"] += 1
 
     async def _run() -> None:
         stop = asyncio.Event()
-        runner = ExecutionBatchRunner(shutdown_timeout_seconds=0.05)
+        runner = ExecutionBatchRunner(shutdown_timeout_seconds=1)
 
         async def fire_stop() -> None:
             await asyncio.sleep(0.01)
@@ -94,7 +94,7 @@ def test_batch_executor_cancels_hanging_tasks_on_timeout() -> None:
 
     async def _run() -> None:
         stop = asyncio.Event()
-        runner = ExecutionBatchRunner(shutdown_timeout_seconds=0.01)
+        runner = ExecutionBatchRunner(shutdown_timeout_seconds=1)
 
         async def fire_stop() -> None:
             stop.set()

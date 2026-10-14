@@ -91,28 +91,37 @@ def test_active_flag_poller_calls_failure_callback_on_database_error() -> None:
     assert callbacks["db_failure"] == 1
 
 
-def test_active_flag_poller_ignores_unexpected_errors_and_retries() -> None:
-    attempts = {"count": 0}
+def test_active_flag_poller_cancels_on_unexpected_error() -> None:
+    calls = {"scenarios": 0, "tasks": 0, "failure": 0}
 
     def should_continue() -> bool:
-        return attempts["count"] < 2
+        return True
 
     async def check_main() -> bool:
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise RuntimeError("transient non-db error")
         return True
+
+    async def check_scenarios() -> None:
+        calls["scenarios"] += 1
+        raise RuntimeError("flag decode failed")
+
+    async def check_tasks() -> None:
+        calls["tasks"] += 1
+
+    def on_db_failure() -> None:
+        calls["failure"] += 1
 
     poller = ActiveFlagPoller(
         interval_seconds=0,
         should_continue=should_continue,
         check_main=check_main,
-        on_db_failure=lambda: None,
+        check_scenarios=check_scenarios,
+        check_tasks=check_tasks,
+        on_db_failure=on_db_failure,
     )
 
     asyncio.run(poller.run())
 
-    assert attempts["count"] == 2
+    assert calls == {"scenarios": 1, "tasks": 0, "failure": 1}
 
 
 def test_active_flag_poller_start_returns_named_task() -> None:

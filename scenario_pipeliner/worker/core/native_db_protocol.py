@@ -3,9 +3,17 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from scenario_pipeliner.worker.core.enums import TaskStatus, WaitingParentCloseStatus
+
+
+class ParentSubtaskCounts(NamedTuple):
+    """Child tallies used when a root task leaves ``RUNNING``."""
+
+    pending_open: int
+    failed_non_blocking: int
+    failed_blocking: int
 
 
 class NativeTaskStorage(ABC):
@@ -31,16 +39,25 @@ class NativeTaskStorage(ABC):
         current_executions: int,
         next_run_at: datetime | None,
         payload_json: str | None,
+        rollup_parent: bool = False,
     ) -> bool:
         """Insert a result row only if the task status update affected a row.
+
+        When ``rollup_parent`` is set and ``status`` is ``FINISHED``, child rows
+        are locked in the same transaction and the stored status becomes
+        ``FAILED`` (blocking child already failed), ``WAITING``, or
+        ``FINISHED_WITH_ERROR``.
 
         Returns whether the task row was updated.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def count_parent_subtasks_state(self, parent_id: int) -> tuple[int, int]:
-        """Return (pending_open_children, failed_non_blocking) for parent."""
+    async def count_parent_subtasks_state(self, parent_id: int) -> ParentSubtaskCounts:
+        """Return open, failed non-blocking, and failed blocking child counts.
+
+        Soft-deleted children (``deleted_at`` set) are omitted.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -52,7 +69,10 @@ class NativeTaskStorage(ABC):
 
     @abstractmethod
     async def cancel_open_subtasks(self, parent_id: int) -> None:
-        """Cancel NEW/QUEUED/RUNNING children for parent. Terminal rows are left."""
+        """Cancel NEW/QUEUED/RUNNING children for parent.
+
+        Terminal rows and soft-deleted rows are left unchanged.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -72,8 +92,12 @@ class NativeTaskStorage(ABC):
         *,
         alias: str | None,
         steps_names: list[str] | None,
-    ) -> None:
-        """Set RUNNING, heartbeat, and optional alias/steps_names in one UPDATE."""
+    ) -> bool:
+        """Set RUNNING only while the row is still ``QUEUED``.
+
+        Returns whether the row was updated. A cancel that landed after the
+        lock must stay ``CANCELLED``.
+        """
         raise NotImplementedError
 
     @abstractmethod

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
@@ -49,8 +50,14 @@ class AsyncRabbitMQClient(AsyncBrokerClient[RabbitMQSettings]):
 
     async def connect(self) -> None:
         """Connect to RabbitMQ."""
-        self.connection = await aio_pika.connect_robust(url=self._connection_url())
-        self.channel = await self.connection.channel()
+        timeout = self.settings.RABBITMQ_CONNECT_TIMEOUT_SECONDS
+        self.connection = await asyncio.wait_for(
+            aio_pika.connect_robust(url=self._connection_url(), timeout=timeout),
+            timeout=timeout,
+        )
+        self.channel = await asyncio.wait_for(
+            self.connection.channel(), timeout=timeout
+        )
         self.initialized = True
 
     async def connect_with_qos(self, *, prefetch_count: int) -> None:
@@ -97,7 +104,11 @@ class AsyncRabbitMQClient(AsyncBrokerClient[RabbitMQSettings]):
         if self.connection and not self.connection.is_closed:
             await self.connection.close()
 
-        self.initialized = False
+        self.drop()
+
+    def _drop_connection(self) -> None:
+        self.connection = None
+        self.channel = None
         self.queues.clear()
 
     async def publish_bytes(
@@ -141,3 +152,35 @@ class AsyncRabbitMQClient(AsyncBrokerClient[RabbitMQSettings]):
         if not self.channel:
             self.initialized = False
             raise RuntimeError("Not connected to RabbitMQ")
+
+    async def ping(self) -> None:
+        """Passive-declare consumed queues, or ``amq.direct`` when none are cached.
+
+        A closed connection or channel fails before the round-trip. Each
+        declare is bounded by ``RABBITMQ_PING_TIMEOUT_SECONDS``.
+        """
+        await self.check_connection()
+        if self.connection is None or self.connection.is_closed:
+            self.initialized = False
+            raise RuntimeError("RabbitMQ connection is closed")
+        if self.channel is None or self.channel.is_closed:
+            self.initialized = False
+            raise RuntimeError("RabbitMQ channel is closed")
+        timeout = self.settings.RABBITMQ_PING_TIMEOUT_SECONDS
+        names = list(self.queues)
+        try:
+            if not names:
+                await asyncio.wait_for(self._ping_exchange(timeout), timeout)
+                return
+            for name in names:
+                await asyncio.wait_for(self._ping_queue(name, timeout), timeout)
+        except TimeoutError as exc:
+            raise RuntimeError("RabbitMQ ping timed out") from exc
+
+    async def _ping_exchange(self, timeout: int) -> None:
+        assert self.channel is not None
+        await self.channel.declare_exchange("amq.direct", passive=True, timeout=timeout)
+
+    async def _ping_queue(self, queue_name: str, timeout: int) -> None:
+        assert self.channel is not None
+        await self.channel.declare_queue(name=queue_name, passive=True, timeout=timeout)

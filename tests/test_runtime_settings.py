@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from scenario_pipeliner.api.enums import DbBackend, Mode
+from scenario_pipeliner.worker.core.settings import DEFAULT_POLL_INTERVAL_SECONDS
 from scenario_pipeliner.worker.runtime.settings import (
     PostgresRuntimeSettings,
     RuntimeEnvSettings,
@@ -50,6 +51,9 @@ def test_runtime_env_settings_from_env(
     assert runner.ZOMBIE_TASKS_TIMEOUT_MINUTES == 12
     assert runner.MAX_CONCURRENT_TASKS == 8
     assert runner.HEARTBEAT_INTERVAL_SECONDS == 15
+    broker = settings.broker_runner_settings()
+    assert broker.INGRESS_HANDLER_TIMEOUT_SECONDS == 120
+    assert broker.PING_FAILURE_LIMIT == 3
 
 
 def test_runtime_env_settings_core_version_defaults_to_package(
@@ -58,8 +62,10 @@ def test_runtime_env_settings_core_version_defaults_to_package(
     from scenario_pipeliner.version import __version__
 
     monkeypatch.delenv("SCENARIO_PIPELINER_CORE_VERSION", raising=False)
+    monkeypatch.delenv("RUNNER_POLL_INTERVAL_SECONDS", raising=False)
     settings = RuntimeEnvSettings(_env_file=None)
     assert settings.core_version == __version__
+    assert settings.runner_poll_interval_seconds == DEFAULT_POLL_INTERVAL_SECONDS
 
 
 def test_runtime_env_settings_rejects_non_postgres(

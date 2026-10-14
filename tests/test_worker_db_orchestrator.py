@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import pytest
@@ -142,7 +142,7 @@ def test_db_orchestrator_on_task_error_receives_promoted_state_with_mutations() 
 
 def test_db_orchestrator_timeout_calls_timeout_hook() -> None:
     def factory() -> AsyncPipeline:
-        return _SpyPipeline(delay=0.2)
+        return _SpyPipeline(delay=5)
 
     router = TaskExecutionRouter(
         pipeline_factories={"scenario9": factory},
@@ -150,7 +150,7 @@ def test_db_orchestrator_timeout_calls_timeout_hook() -> None:
     )
     orchestrator = DBExecutionOrchestrator(
         router=router,
-        batch_runner=ExecutionBatchRunner(shutdown_timeout_seconds=0.01),
+        batch_runner=ExecutionBatchRunner(shutdown_timeout_seconds=1),
     )
     state = ExecutionBatchState(tasks=[TaskState(task_id=1, scenario="scenario9")])
     timeout_calls = {"count": 0}
@@ -188,7 +188,7 @@ def test_db_orchestrator_long_task_without_stop_does_not_timeout() -> None:
     )
     orchestrator = DBExecutionOrchestrator(
         router=router,
-        batch_runner=ExecutionBatchRunner(shutdown_timeout_seconds=0.01),
+        batch_runner=ExecutionBatchRunner(shutdown_timeout_seconds=1),
     )
     state = ExecutionBatchState(tasks=[TaskState(task_id=1, scenario="scenario9")])
     timeout_calls = {"count": 0}
@@ -239,3 +239,111 @@ def test_db_orchestrator_poller_db_failure_cancels_tasks() -> None:
 
 async def _ignore_task_error(task: TaskState, error: Exception) -> None:
     return
+
+
+class _WaitCancelPipeline(AsyncPipeline):
+    async def execute(self, state: BaseState | None = None) -> None:
+        assert isinstance(state, TaskState)
+        await asyncio.wait_for(state.cancel_event.wait(), timeout=2)
+        raise PipelineCancelledError("paused")
+
+
+class _Flags:
+    def __init__(
+        self,
+        *,
+        worker_enabled: bool = True,
+        paused: set[str] | None = None,
+    ) -> None:
+        self.worker_enabled = worker_enabled
+        self.paused = paused or set()
+
+    async def is_worker_enabled(self) -> bool:
+        return self.worker_enabled
+
+    async def is_scenario_active(self, scenario: str) -> bool:
+        return scenario not in self.paused
+
+    async def touch_heartbeats(self, task_ids: Sequence[int]) -> None:
+        return
+
+
+def test_scenario_pause_cancels_only_that_scenario() -> None:
+    def wait_factory() -> AsyncPipeline:
+        return _WaitCancelPipeline(steps=[])
+
+    def done_factory() -> AsyncPipeline:
+        return _SpyPipeline()
+
+    router = TaskExecutionRouter(
+        pipeline_factories={"alpha": wait_factory, "beta": done_factory},
+        state_classes={"alpha": TaskState, "beta": TaskState},
+    )
+    orchestrator = DBExecutionOrchestrator(
+        router=router,
+        batch_runner=ExecutionBatchRunner(shutdown_timeout_seconds=1),
+        max_concurrent_tasks=3,
+        runtime_control=_Flags(paused={"alpha"}),
+        heartbeat_interval_seconds=0,
+    )
+    state = ExecutionBatchState(
+        tasks=[
+            TaskState(task_id=1, scenario="alpha"),
+            TaskState(task_id=2, scenario="alpha"),
+            TaskState(task_id=3, scenario="beta"),
+        ]
+    )
+    cancelled: list[int] = []
+    succeeded: list[int] = []
+
+    async def on_task_error(task: TaskState, error: Exception) -> None:
+        assert isinstance(error, PipelineCancelledError)
+        cancelled.append(task.task_id)
+
+    async def on_task_success(task: TaskState) -> None:
+        succeeded.append(task.task_id)
+
+    asyncio.run(
+        orchestrator.execute(
+            state,
+            on_task_error=on_task_error,
+            on_task_success=on_task_success,
+        )
+    )
+
+    assert sorted(cancelled) == [1, 2]
+    assert succeeded == [3]
+    assert state.is_cancelled is False
+
+
+def test_worker_disabled_cancels_whole_batch() -> None:
+    router = TaskExecutionRouter(
+        pipeline_factories={
+            "alpha": lambda: _WaitCancelPipeline(steps=[]),
+            "beta": lambda: _WaitCancelPipeline(steps=[]),
+        },
+        state_classes={"alpha": TaskState, "beta": TaskState},
+    )
+    orchestrator = DBExecutionOrchestrator(
+        router=router,
+        batch_runner=ExecutionBatchRunner(shutdown_timeout_seconds=1),
+        max_concurrent_tasks=2,
+        runtime_control=_Flags(worker_enabled=False),
+        heartbeat_interval_seconds=0,
+    )
+    state = ExecutionBatchState(
+        tasks=[
+            TaskState(task_id=1, scenario="alpha"),
+            TaskState(task_id=2, scenario="beta"),
+        ]
+    )
+    cancelled: list[int] = []
+
+    async def on_task_error(task: TaskState, error: Exception) -> None:
+        assert isinstance(error, PipelineCancelledError)
+        cancelled.append(task.task_id)
+
+    asyncio.run(orchestrator.execute(state, on_task_error=on_task_error))
+
+    assert sorted(cancelled) == [1, 2]
+    assert state.is_cancelled is True

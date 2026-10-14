@@ -27,6 +27,14 @@ class AsyncClient[T, TClientSettings: ClientSettings](ABC):
         if not self.initialized:
             raise RuntimeError(f"{self.__class__.__name__} is not initialized")
 
+    @abstractmethod
+    async def ping(self) -> None:
+        """One short round-trip that raises when the remote side does not answer.
+
+        ``check_connection`` only checks that the client was opened. Callers
+        that need liveness (the broker loop) call ``ping`` on a cadence.
+        """
+
     async def __aenter__(self) -> "AsyncClient[T, TClientSettings]":
         await self.connect()
         return self
@@ -44,6 +52,15 @@ class AsyncBrokerClient[TClientSettings: ClientSettings](
     AsyncClient[str, TClientSettings], ABC
 ):
     """Broker connection client. Ingress/egress use named queues, not receive/send."""
+
+    def drop(self) -> None:
+        """Forget the connection without waiting for the broker."""
+        self._drop_connection()
+        self.initialized = False
+
+    def _drop_connection(self) -> None:
+        """Release client-specific handles. Must not wait on the broker."""
+        return None
 
 
 class AsyncDBClient[T, TClientSettings: ClientSettings](

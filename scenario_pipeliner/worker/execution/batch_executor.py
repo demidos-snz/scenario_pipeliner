@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class ExecutionBatchRunner:
     """Run a coroutine batch; apply shutdown timeout only after ``stop_event``."""
 
-    def __init__(self, *, shutdown_timeout_seconds: float) -> None:
+    def __init__(self, *, shutdown_timeout_seconds: int) -> None:
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
 
     async def run_with_shutdown_timeout(

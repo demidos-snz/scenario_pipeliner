@@ -52,6 +52,26 @@ class AsyncPostgreSQLClient(
         await super().check_connection()
         assert self.pool is not None
 
+    async def ping(self) -> None:
+        """Run ``SELECT 1``. Bounded by ``DB_COMMAND_TIMEOUT_SECONDS``."""
+        await self.check_connection()
+        try:
+            await asyncio.wait_for(
+                self._select_one(),
+                timeout=self.settings.DB_COMMAND_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Database ping failed") from exc
+
+    async def _select_one(self) -> None:
+        assert self.pool is not None
+        async with self.pool.acquire(
+            timeout=self.settings.DB_COMMAND_TIMEOUT_SECONDS
+        ) as conn:
+            await conn.fetchval("SELECT 1")
+
     async def receive(
         self, query: str, parameters: tuple[Any, ...] | list[Any] | None = None
     ) -> list[tuple[Any, ...]]:
@@ -60,7 +80,9 @@ class AsyncPostgreSQLClient(
         assert self.pool is not None
 
         try:
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(
+                timeout=self.settings.DB_COMMAND_TIMEOUT_SECONDS
+            ) as conn:
                 if parameters is not None:
                     rows = await conn.fetch(query, *parameters)
                 else:
@@ -84,7 +106,9 @@ class AsyncPostgreSQLClient(
         assert self.pool is not None
 
         try:
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire(
+                timeout=self.settings.DB_COMMAND_TIMEOUT_SECONDS
+            ) as conn:
                 await conn.execute(query, *param)
         except Exception as e:
             self._log_query_error(operation_name, e, query)
@@ -96,7 +120,9 @@ class AsyncPostgreSQLClient(
         await self.check_connection()
         assert self.pool is not None
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire(
+            timeout=self.settings.DB_COMMAND_TIMEOUT_SECONDS
+        ) as conn:
             try:
                 async with conn.transaction():
                     yield conn

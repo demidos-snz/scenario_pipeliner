@@ -13,6 +13,8 @@ from sqlalchemy.pool import Pool
 from scenario_pipeliner.db.exceptions import SchemaPrivilegeError
 from scenario_pipeliner.db.schemes_names import validate_schema_name
 from scenario_pipeliner.db.settings import (
+    DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_DB_POOL_MAX_SIZE,
     DEFAULT_DB_POOL_MIN_SIZE,
     PostgresUrls,
@@ -108,6 +110,11 @@ def _attach_search_path(sync_engine: Engine, schema: str) -> None:
             cursor.close()
 
 
+def _statement_timeout_ms(command_timeout: int) -> str:
+    """PostgreSQL ``statement_timeout`` startup value, in milliseconds."""
+    return str(command_timeout * 1000)
+
+
 def create_async_engine_for_schema(
     url: str,
     schema: str,
@@ -115,14 +122,26 @@ def create_async_engine_for_schema(
     min_size: int = DEFAULT_DB_POOL_MIN_SIZE,
     max_size: int = DEFAULT_DB_POOL_MAX_SIZE,
     poolclass: type[Pool] | None = None,
+    connect_timeout: int = DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
+    command_timeout: int = DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
 ) -> AsyncEngine:
-    kwargs: dict[str, Any] = {"pool_pre_ping": True}
+    kwargs: dict[str, Any] = {
+        "pool_pre_ping": True,
+        "connect_args": {
+            "timeout": connect_timeout,
+            "command_timeout": command_timeout,
+            "server_settings": {
+                "statement_timeout": _statement_timeout_ms(command_timeout),
+            },
+        },
+    }
     if poolclass is not None:
         kwargs["poolclass"] = poolclass
     else:
         kwargs["pool_size"], kwargs["max_overflow"] = sqlalchemy_pool_params(
             min_size, max_size
         )
+        kwargs["pool_timeout"] = command_timeout
     engine = create_async_engine(url, **kwargs)
     _attach_search_path(engine.sync_engine, schema)
     return engine
@@ -134,6 +153,8 @@ async def create_asyncpg_pool_for_schema(
     *,
     min_size: int = DEFAULT_DB_POOL_MIN_SIZE,
     max_size: int = DEFAULT_DB_POOL_MAX_SIZE,
+    connect_timeout: int = DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
+    command_timeout: int = DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
 ) -> asyncpg.Pool[Any]:
     """asyncpg pool with the same core-schema ``search_path`` as SQLAlchemy."""
     check_pool_bounds(min_size, max_size)
@@ -148,7 +169,12 @@ async def create_asyncpg_pool_for_schema(
         min_size=min_size,
         max_size=max_size,
         init=_init,
-        server_settings={"search_path": schema_name},
+        timeout=connect_timeout,
+        command_timeout=command_timeout,
+        server_settings={
+            "search_path": schema_name,
+            "statement_timeout": _statement_timeout_ms(command_timeout),
+        },
     )
 
 

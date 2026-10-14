@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import insert, select
@@ -120,3 +121,51 @@ def test_runner_app_executes_inserted_linear_task(
 
     status = asyncio.run(_run())
     assert status == TaskStatus.FINISHED.value
+
+
+def test_runner_app_reraises_broker_failure() -> None:
+    class _Env:
+        run_seconds = None
+        runner_shutdown_timeout_seconds = 1
+
+    class _Bootstrap:
+        env = _Env()
+
+    class _Broker:
+        def __init__(self) -> None:
+            self.exited = False
+
+        def stop(self) -> None:
+            return None
+
+        async def __aenter__(self) -> "_Broker":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            self.exited = True
+
+        async def execute(self) -> None:
+            raise RuntimeError("broker dead")
+
+    class _Pool:
+        async def close(self) -> None:
+            return None
+
+    class _Engine:
+        async def dispose(self) -> None:
+            return None
+
+    class _Db:
+        engine = _Engine()
+
+    broker = _Broker()
+    app = RunnerApp(
+        bootstrap=cast(Any, _Bootstrap()),
+        pool=cast(Any, _Pool()),
+        db=cast(Any, _Db()),
+        broker_runner=cast(Any, broker),
+        runner_mode="broker",
+    )
+    with pytest.raises(RuntimeError, match="broker dead"):
+        asyncio.run(app.run())
+    assert broker.exited

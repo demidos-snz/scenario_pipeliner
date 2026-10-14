@@ -54,6 +54,27 @@ class AsyncHTTPxAPIClient(AsyncAPIClient[HTTPResponse, TAPISettings]):
             self.initialized = False
             raise RuntimeError("HTTP client is not connected")
 
+    async def ping(self) -> None:
+        """Raise if the HTTP session is missing or already closed.
+
+        Does not call the network: the client has no health URL. The check
+        still finishes within ``API_TIMEOUT``.
+        """
+        try:
+            await asyncio.wait_for(
+                self._ping_session(),
+                timeout=self.settings.API_TIMEOUT,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError("HTTP client ping timed out") from exc
+
+    async def _ping_session(self) -> None:
+        await self.check_connection()
+        assert self._http is not None
+        if self._http.is_closed:
+            self.initialized = False
+            raise RuntimeError("HTTP client is closed")
+
     def _auth_headers(self) -> dict[str, str]:
         if not self._access_token:
             return {}

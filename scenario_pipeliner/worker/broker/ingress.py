@@ -12,7 +12,11 @@ from scenario_pipeliner.worker.broker.exceptions import (
     IngressReject,
     IngressRetry,
 )
-from scenario_pipeliner.worker.broker.settings import BrokerMessageMeta, TaskDraft
+from scenario_pipeliner.worker.broker.settings import (
+    DEFAULT_MAX_INGRESS_RETRIES,
+    BrokerMessageMeta,
+    TaskDraft,
+)
 from scenario_pipeliner.worker.broker.storage import insert_linear_task_with_ingress
 from scenario_pipeliner.worker.broker.utils import resolve_message_id
 from scenario_pipeliner.worker.broker.worker_plugin_broker_protocol import (
@@ -25,13 +29,8 @@ AckCallback = Callable[[], Awaitable[None]]
 NackCallback = Callable[[bool], Awaitable[None]]  # requeue: bool
 
 
-def ingress_delivery_attempt(meta: BrokerMessageMeta) -> int:
-    """1-based delivery attempt for the requeue cap.
-
-    Prefers RabbitMQ ``x-delivery-count`` (quorum) or ``x-death`` counts.
-    Classic queues only expose ``redelivered``: first delivery is 1, any
-    redelivery is 2, so the cap is effectively 2 without those headers.
-    """
+def _counted_delivery_attempt(meta: BrokerMessageMeta) -> int | None:
+    """1-based attempt from ``x-delivery-count`` or ``x-death``, if present."""
     headers = meta.headers
     raw_count = headers.get("x-delivery-count")
     if raw_count is not None:
@@ -54,7 +53,28 @@ def ingress_delivery_attempt(meta: BrokerMessageMeta) -> int:
                 continue
         if total:
             return total
+    return None
+
+
+def ingress_delivery_attempt(meta: BrokerMessageMeta) -> int:
+    """1-based delivery attempt for the requeue cap.
+
+    Prefers RabbitMQ ``x-delivery-count`` (quorum) or ``x-death`` counts.
+    Classic queues only expose ``redelivered``: first delivery is 1, any
+    redelivery is 2. That second delivery is the last one, because the flag
+    never grows and ``attempt < max`` would otherwise stay true forever.
+    """
+    counted = _counted_delivery_attempt(meta)
+    if counted is not None:
+        return counted
     return 2 if meta.redelivered else 1
+
+
+def _requeue_within_cap(meta: BrokerMessageMeta, max_ingress_retries: int) -> bool:
+    attempt = ingress_delivery_attempt(meta)
+    if attempt >= max_ingress_retries:
+        return False
+    return _counted_delivery_attempt(meta) is not None or not meta.redelivered
 
 
 async def _nack_with_retry_cap(
@@ -67,7 +87,7 @@ async def _nack_with_retry_cap(
     reason: str,
 ) -> None:
     attempt = ingress_delivery_attempt(meta)
-    requeue = attempt < max_ingress_retries
+    requeue = _requeue_within_cap(meta, max_ingress_retries)
     if not requeue:
         logger.warning(
             "broker ingress retry cap plugin=%s queue=%s message_id=%s "
@@ -91,7 +111,7 @@ async def process_ingress_message(
     meta: BrokerMessageMeta,
     ack: AckCallback,
     nack: NackCallback,
-    max_ingress_retries: int = 3,
+    max_ingress_retries: int = DEFAULT_MAX_INGRESS_RETRIES,
 ) -> int | None:
     """Validate via plugin hooks and persist LINEAR task + broker_ingress.
 
@@ -195,7 +215,14 @@ async def process_ingress_message(
             meta.queue,
             message_id,
         )
-        await nack(True)
+        await _nack_with_retry_cap(
+            nack=nack,
+            meta=enriched,
+            max_ingress_retries=max_ingress_retries,
+            plugin_name=plugin_name,
+            message_id=message_id,
+            reason="persist_error",
+        )
         return None
 
     await ack()

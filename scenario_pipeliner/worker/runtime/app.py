@@ -33,6 +33,16 @@ from scenario_pipeliner.worker.runtime.runner_helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _broker_task_failure(task: asyncio.Task[Any]) -> BaseException | None:
+    """Return why a broker task ended, when it ended before a requested stop."""
+    if task.cancelled():
+        return None
+    exc = task.exception()
+    if exc is not None:
+        return exc
+    return RuntimeError("broker runner exited before stop")
+
+
 def build_broker_bindings(
     registry: MainPipelinePluginRegistry,
 ) -> list[BrokerPluginBinding]:
@@ -185,6 +195,8 @@ class RunnerApp:
         started_at = loop.time()
         timeout_seconds = self.bootstrap.env.run_seconds
         tasks: list[asyncio.Task[Any]] = []
+        broker_task: asyncio.Task[Any] | None = None
+        broker_failure: BaseException | None = None
 
         async def _supervise() -> None:
             while not self._stop_event.is_set():
@@ -206,11 +218,10 @@ class RunnerApp:
                 )
             if self.broker_runner is not None:
                 await self.broker_runner.__aenter__()
-                tasks.append(
-                    asyncio.create_task(
-                        self.broker_runner.execute(), name="scenario-broker-runner"
-                    )
+                broker_task = asyncio.create_task(
+                    self.broker_runner.execute(), name="scenario-broker-runner"
                 )
+                tasks.append(broker_task)
             if not tasks:
                 raise RuntimeError(
                     f"no runners configured for mode={self.runner_mode!r}"
@@ -218,9 +229,26 @@ class RunnerApp:
 
             supervisor = asyncio.create_task(_supervise(), name="scenario-supervisor")
             try:
-                await supervisor
+                if broker_task is None:
+                    await supervisor
+                else:
+                    _done, _pending = await asyncio.wait(
+                        {supervisor, broker_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if broker_task in _done and not self._stop_event.is_set():
+                        broker_failure = _broker_task_failure(broker_task)
+                        if broker_failure is not None:
+                            logger.error(
+                                "broker runner stopped; shutting down",
+                                exc_info=broker_failure,
+                            )
             finally:
                 self.stop()
+                if not supervisor.done():
+                    supervisor.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await supervisor
                 drain = self.bootstrap.env.runner_shutdown_timeout_seconds
                 if tasks:
                     _done, pending = await asyncio.wait(tasks, timeout=drain)
@@ -234,3 +262,5 @@ class RunnerApp:
                 await self.runner.__aexit__(None, None, None)
             await self.pool.close()
             await self.db.engine.dispose()
+        if broker_failure is not None:
+            raise broker_failure

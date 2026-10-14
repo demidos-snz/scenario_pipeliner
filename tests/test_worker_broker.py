@@ -19,6 +19,7 @@ from scenario_pipeliner.worker.broker.ingress import (
 from scenario_pipeliner.worker.broker.outbox import _normalize_headers
 from scenario_pipeliner.worker.broker.runner import BrokerRunner
 from scenario_pipeliner.worker.broker.settings import (
+    DEFAULT_STALE_PROCESSING_MINUTES,
     BrokerMessageMeta,
     BrokerPluginBinding,
     PluginBrokerSettings,
@@ -29,6 +30,8 @@ from scenario_pipeliner.worker.broker.storage import (
     ensure_outbox_pending,
     insert_linear_task_with_ingress,
     insert_outbox_for_terminal_tasks,
+    mark_outbox_publish_failure,
+    mark_outbox_sent,
 )
 from scenario_pipeliner.worker.broker.utils import resolve_message_id
 from scenario_pipeliner.worker.core.enums import EnumDoc, TaskStatus
@@ -110,7 +113,9 @@ def test_runner_broker_settings_defaults_and_runner() -> None:
     defaults = RunnerBrokerSettings()
     assert defaults.RECONCILE_LIMIT == 50
     assert defaults.OUTBOX_LIMIT == 20
-    assert defaults.POLL_INTERVAL_SECONDS == 60
+    assert defaults.POLL_INTERVAL_SECONDS == 2
+    assert defaults.INGRESS_HANDLER_TIMEOUT_SECONDS == 120
+    assert defaults.PING_FAILURE_LIMIT == 3
     with pytest.raises(ValueError):
         RunnerBrokerSettings(RECONCILE_LIMIT=0)
     custom = RunnerBrokerSettings(
@@ -127,8 +132,14 @@ def test_runner_broker_settings_defaults_and_runner() -> None:
 
 
 def test_plugin_broker_settings_outbox_stale_uses_minimum() -> None:
-    assert PluginBrokerSettings().stale_processing_minutes == 15
-    assert PluginBrokerSettings.outbox_stale_processing_minutes({}) == 15
+    assert (
+        PluginBrokerSettings().stale_processing_minutes
+        == DEFAULT_STALE_PROCESSING_MINUTES
+    )
+    assert (
+        PluginBrokerSettings.outbox_stale_processing_minutes({})
+        == DEFAULT_STALE_PROCESSING_MINUTES
+    )
     assert (
         PluginBrokerSettings.outbox_stale_processing_minutes(
             {
@@ -267,6 +278,7 @@ def test_claim_pending_outbox_is_exclusive(core_db: CoreDb) -> None:
         assert len(first) == 1
         assert first[0]["outbox_id"] == outbox_id
         assert first[0]["status"] == BrokerOutboxStatus.PROCESSING.value
+        assert first[0]["claim_token"] == 1
         second = await claim_pending_outbox(core_db, limit=10)
         assert second == []
 
@@ -313,6 +325,57 @@ def test_claim_pending_outbox_reclaims_stale_processing(core_db: CoreDb) -> None
         assert len(reclaimed) == 1
         assert reclaimed[0]["outbox_id"] == outbox_id
         assert reclaimed[0]["status"] == BrokerOutboxStatus.PROCESSING.value
+        assert first[0]["claim_token"] == 1
+        assert reclaimed[0]["claim_token"] == 2
+
+    asyncio.run(_run())
+
+
+def test_stale_outbox_claim_cannot_finish_the_row(core_db: CoreDb) -> None:
+    async def _run() -> None:
+        outbox_id = await _seed_pending_outbox(
+            core_db, message_id=f"fence-{uuid.uuid4().hex}"
+        )
+        first = await claim_pending_outbox(core_db, limit=10)
+        stale_token = int(first[0]["claim_token"])
+        outbox = core_db.core.broker_outbox
+        async with core_db.engine.begin() as conn:
+            await conn.execute(
+                update(outbox)
+                .where(outbox.c.id == outbox_id)
+                .values(updated_at=func.now() - func.make_interval(0, 0, 0, 0, 0, 2))
+            )
+        reclaimed = await claim_pending_outbox(
+            core_db, limit=10, stale_processing_minutes=1
+        )
+        live_token = int(reclaimed[0]["claim_token"])
+
+        assert (
+            await mark_outbox_sent(
+                core_db, outbox_id=outbox_id, claim_token=stale_token
+            )
+            is False
+        )
+        assert (
+            await mark_outbox_publish_failure(
+                core_db,
+                outbox_id=outbox_id,
+                claim_token=stale_token,
+                error="late",
+            )
+            is False
+        )
+        async with core_db.engine.connect() as conn:
+            status = (
+                await conn.execute(
+                    select(outbox.c.status).where(outbox.c.id == outbox_id)
+                )
+            ).scalar_one()
+        assert status == BrokerOutboxStatus.PROCESSING.value
+        assert (
+            await mark_outbox_sent(core_db, outbox_id=outbox_id, claim_token=live_token)
+            is True
+        )
 
     asyncio.run(_run())
 
@@ -423,8 +486,92 @@ def test_process_ingress_retry_respects_cap() -> None:
             max_ingress_retries=5,
         )
 
+        await process_ingress_message(
+            db=cast(CoreDb, object()),
+            plugin_name="demo",
+            hooks=_Hooks(),
+            raw=b"{}",
+            meta=BrokerMessageMeta(
+                queue="q1",
+                message_id="m3",
+                redelivered=True,
+                headers={"x-delivery-count": 1},
+            ),
+            ack=ack,
+            nack=nack,
+            max_ingress_retries=5,
+        )
+        await process_ingress_message(
+            db=cast(CoreDb, object()),
+            plugin_name="demo",
+            hooks=_Hooks(),
+            raw=b"{}",
+            meta=BrokerMessageMeta(
+                queue="q1",
+                message_id="m4",
+                redelivered=True,
+                headers={"x-delivery-count": 4},
+            ),
+            ack=ack,
+            nack=nack,
+            max_ingress_retries=5,
+        )
+
     asyncio.run(_run())
-    assert nacked == [False, True]
+    # Classic redelivery stops even when max is higher. A counted attempt
+    # requeues until it reaches max.
+    assert nacked == [False, False, True, False]
+
+
+def test_process_ingress_persist_failure_respects_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Hooks:
+        async def on_ingress(self, raw, meta):  # noqa: ANN001
+            return TaskDraft(scenario="demo.ping", payload=TaskPayload())
+
+        async def on_egress(self, task, result, ingress):  # noqa: ANN001
+            return None
+
+    async def _boom(*args: object, **kwargs: object) -> int:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(
+        "scenario_pipeliner.worker.broker.ingress.insert_linear_task_with_ingress",
+        _boom,
+    )
+    nacked: list[bool] = []
+
+    async def ack() -> None:
+        raise AssertionError("ack")
+
+    async def nack(requeue: bool) -> None:
+        nacked.append(requeue)
+
+    async def _run() -> None:
+        await process_ingress_message(
+            db=cast(CoreDb, object()),
+            plugin_name="demo",
+            hooks=_Hooks(),
+            raw=b"{}",
+            meta=BrokerMessageMeta(queue="q1", message_id="m1"),
+            ack=ack,
+            nack=nack,
+            max_ingress_retries=3,
+        )
+        await process_ingress_message(
+            db=cast(CoreDb, object()),
+            plugin_name="demo",
+            hooks=_Hooks(),
+            raw=b"{}",
+            meta=BrokerMessageMeta(queue="q1", message_id="m2", redelivered=True),
+            ack=ack,
+            nack=nack,
+            max_ingress_retries=3,
+        )
+
+    asyncio.run(_run())
+    assert nacked == [True, False]
 
 
 def test_build_broker_bindings_requires_owned_scenarios() -> None:
@@ -612,3 +759,162 @@ def test_publish_pending_outbox_partial_failure_retries_all_queues(
     assert status == BrokerOutboxStatus.PENDING.value
     assert sent == 1
     assert published == ["q-a", "q-b", "q-a", "q-b"]
+
+
+def test_broker_runner_ingress_timeout_nacks_and_requeues() -> None:
+    class _Hooks:
+        async def on_ingress(self, raw, meta):  # noqa: ANN001
+            await asyncio.sleep(30)
+
+        async def on_egress(self, task, result, ingress):  # noqa: ANN001
+            return None
+
+    binding = BrokerPluginBinding(
+        plugin_name="demo",
+        hooks=_Hooks(),
+        settings=PluginBrokerSettings(input_queues=["q1"]),
+        scenarios=["demo.ping"],
+    )
+    runner = BrokerRunner(
+        db=cast(CoreDb, object()),
+        bindings=[binding],
+        runner_settings=RunnerBrokerSettings(INGRESS_HANDLER_TIMEOUT_SECONDS=1),
+    )
+    callback = runner._make_ingress_callback("q1", binding)
+
+    class _Message:
+        body = b"{}"
+        headers: dict[str, object] = {}
+        delivery_tag = 1
+        message_id = "m1"
+        reply_to = None
+        content_type = None
+        redelivered = False
+
+        def __init__(self) -> None:
+            self.nacked: list[bool] = []
+
+        async def ack(self) -> None:
+            raise AssertionError("ack")
+
+        async def nack(self, requeue: bool = True) -> None:
+            self.nacked.append(requeue)
+
+    message = _Message()
+    asyncio.run(callback(message))
+    assert message.nacked == [True]
+
+
+def _broker_binding() -> BrokerPluginBinding:
+    class _Hooks:
+        async def on_ingress(self, raw, meta):  # noqa: ANN001
+            raise AssertionError("ingress unused")
+
+        async def on_egress(self, task, result, ingress):  # noqa: ANN001
+            return None
+
+    return BrokerPluginBinding(
+        plugin_name="demo",
+        hooks=_Hooks(),
+        settings=PluginBrokerSettings(input_queues=["q1"]),
+        scenarios=["demo.ping"],
+    )
+
+
+def test_broker_runner_reconnects_after_ping_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scenario_pipeliner.worker.broker import runner as runner_mod
+
+    holder: dict[str, BrokerRunner] = {}
+    created: list[_Client] = []
+
+    class _Client:
+        def __init__(self, settings: object | None = None) -> None:
+            self.pings = 0
+            self.disconnects = 0
+            self.starts = 0
+            created.append(self)
+
+        async def connect_with_qos(self, *, prefetch_count: int) -> None:
+            self.starts += 1
+
+        async def consume_unacked(self, queue_name: str, callback: object) -> str:
+            return "tag"
+
+        async def ping(self) -> None:
+            self.pings += 1
+            if self.pings == 1:
+                raise RuntimeError("channel closed")
+            if self.pings >= 3:
+                holder["runner"].stop()
+
+        async def disconnect(self) -> None:
+            self.disconnects += 1
+
+        def drop(self) -> None:
+            return None
+
+    async def _noop(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(runner_mod, "AsyncRabbitMQClient", _Client)
+    monkeypatch.setattr(runner_mod, "reconcile_terminal_broker_tasks", _noop)
+    monkeypatch.setattr(runner_mod, "publish_pending_outbox", _noop)
+    runner = BrokerRunner(
+        db=cast(CoreDb, object()),
+        bindings=[_broker_binding()],
+        runner_settings=RunnerBrokerSettings(
+            POLL_INTERVAL_SECONDS=1,
+            PING_FAILURE_LIMIT=3,
+        ),
+    )
+    holder["runner"] = runner
+    asyncio.run(runner.execute())
+    assert created[0].starts == 2
+    assert created[0].pings == 3
+    assert created[0].disconnects == 2
+
+
+def test_broker_runner_stops_after_repeated_restore_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scenario_pipeliner.worker.broker import runner as runner_mod
+
+    class _Client:
+        def __init__(self, settings: object | None = None) -> None:
+            self.starts = 0
+
+        async def connect_with_qos(self, *, prefetch_count: int) -> None:
+            self.starts += 1
+            if self.starts > 1:
+                raise RuntimeError("reconnect failed")
+
+        async def consume_unacked(self, queue_name: str, callback: object) -> str:
+            return "tag"
+
+        async def ping(self) -> None:
+            raise RuntimeError("channel closed")
+
+        async def disconnect(self) -> None:
+            return None
+
+        def drop(self) -> None:
+            return None
+
+    async def _noop(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(runner_mod, "AsyncRabbitMQClient", _Client)
+    monkeypatch.setattr(runner_mod, "reconcile_terminal_broker_tasks", _noop)
+    monkeypatch.setattr(runner_mod, "publish_pending_outbox", _noop)
+    runner = BrokerRunner(
+        db=cast(CoreDb, object()),
+        bindings=[_broker_binding()],
+        runner_settings=RunnerBrokerSettings(
+            POLL_INTERVAL_SECONDS=1,
+            PING_FAILURE_LIMIT=2,
+        ),
+    )
+    with pytest.raises(RuntimeError, match="reconnect failed"):
+        asyncio.run(runner.execute())

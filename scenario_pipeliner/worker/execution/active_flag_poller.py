@@ -6,13 +6,11 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from scenario_pipeliner.worker.core.exceptions import DatabaseError
-
 logger = logging.getLogger(__name__)
 
 
 class ActiveFlagPoller:
-    """Poll active flags with fail-closed behavior on DB failures."""
+    """Poll active flags and cancel the batch when a check fails."""
 
     def __init__(
         self,
@@ -40,14 +38,12 @@ class ActiveFlagPoller:
                     await self._check_scenarios()
                 if self._check_tasks is not None:
                     await self._check_tasks()
-            except DatabaseError:
-                logger.error(
-                    "Database error in active-flag poller; cancelling execution batch"
+            except Exception:
+                logger.exception(
+                    "Active-flag poller failed; cancelling execution batch"
                 )
                 self._on_db_failure()
                 break
-            except Exception:
-                logger.exception("Unexpected error in active-flag poller")
             await asyncio.sleep(self._interval_seconds)
 
     def start(self) -> asyncio.Task[None]:

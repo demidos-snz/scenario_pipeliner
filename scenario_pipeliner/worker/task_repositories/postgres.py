@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, case, func, literal, or_, select, update
+from sqlalchemy import and_, func, insert, literal, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.sql.elements import ColumnElement
@@ -21,8 +21,14 @@ from scenario_pipeliner.worker.core.enums import (
     WaitingParentCloseStatus,
     as_waiting_parent_close_status,
 )
-from scenario_pipeliner.worker.core.exceptions import DatabaseError
-from scenario_pipeliner.worker.core.native_db_protocol import NativeTaskStorage
+from scenario_pipeliner.worker.core.exceptions import (
+    DatabaseError,
+    PipelineCancelledError,
+)
+from scenario_pipeliner.worker.core.native_db_protocol import (
+    NativeTaskStorage,
+    ParentSubtaskCounts,
+)
 from scenario_pipeliner.worker.core.settings import RunnerDBSettings
 from scenario_pipeliner.worker.core.states import (
     ExecutionBatchState,
@@ -128,7 +134,14 @@ class PostgresTaskStorage(NativeTaskStorage):
         )
         stmt = (
             update(tasks)
-            .where(tasks.c.id.in_(inner))
+            .where(
+                and_(
+                    tasks.c.id.in_(inner),
+                    tasks.c.deleted_at.is_(None),
+                    or_(new_runnable, zombie),
+                    worker_enabled,
+                )
+            )
             .values(
                 status=TaskStatus.QUEUED.value,
                 updated_at=func.now(),
@@ -161,7 +174,7 @@ class PostgresTaskStorage(NativeTaskStorage):
         *,
         alias: str | None,
         steps_names: list[str] | None,
-    ) -> None:
+    ) -> bool:
         tasks = self._core.tasks
         values: dict[str, Any] = {
             "status": TaskStatus.RUNNING.value,
@@ -173,9 +186,20 @@ class PostgresTaskStorage(NativeTaskStorage):
         if steps_names is not None:
             values["steps_names"] = steps_names
         async with self._engine.begin() as conn:
-            await conn.execute(
-                update(tasks).where(tasks.c.id == task_id).values(**values)
-            )
+            updated = (
+                await conn.execute(
+                    update(tasks)
+                    .where(
+                        and_(
+                            tasks.c.id == task_id,
+                            tasks.c.status == TaskStatus.QUEUED.value,
+                        )
+                    )
+                    .values(**values)
+                    .returning(tasks.c.id)
+                )
+            ).first()
+        return updated is not None
 
     async def setting_is_on(self, key: str) -> bool:
         settings = self._core.settings
@@ -261,9 +285,8 @@ class PostgresTaskStorage(NativeTaskStorage):
         current_executions: int,
         next_run_at: datetime | None,
         payload_json: str | None,
+        rollup_parent: bool = False,
     ) -> bool:
-        from sqlalchemy import insert
-
         tasks = self._core.tasks
         results = self._core.results
         payload_value: Any = None
@@ -281,6 +304,15 @@ class PostgresTaskStorage(NativeTaskStorage):
 
         async def _insert() -> bool:
             async with self._engine.begin() as conn:
+                write_status = status
+                cancel_children = False
+                if rollup_parent and status == TaskStatus.FINISHED:
+                    counts = await self._load_parent_subtask_counts(
+                        conn, task_id, lock=True
+                    )
+                    write_status = self._parent_status_for_successful_root(counts)
+                    cancel_children = write_status == TaskStatus.FAILED
+                values["status"] = write_status
                 updated = (
                     await conn.execute(
                         update(tasks)
@@ -301,6 +333,8 @@ class PostgresTaskStorage(NativeTaskStorage):
                 await conn.execute(
                     insert(results).values(task_id=task_id, result=result_value)
                 )
+                if cancel_children:
+                    await self._cancel_open_subtasks(conn, task_id)
             return True
 
         return await run_with_identity_sequence_retry(
@@ -308,39 +342,63 @@ class PostgresTaskStorage(NativeTaskStorage):
             _insert,
         )
 
-    async def count_parent_subtasks_state(self, parent_id: int) -> tuple[int, int]:
-        tasks = self._core.tasks
-        pending = func.coalesce(
-            func.sum(
-                case(
-                    (
-                        tasks.c.status.not_in(tuple(_TERMINAL_SUBTASK_STATUSES)),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ),
-            0,
-        )
-        failed = func.coalesce(
-            func.sum(
-                case(
-                    (
-                        and_(
-                            tasks.c.is_block.is_(False),
-                            tasks.c.status.in_(tuple(_FAILED_SUBTASK_STATUSES)),
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ),
-            0,
-        )
-        stmt = select(pending, failed).where(tasks.c.parent_id == parent_id)
+    async def count_parent_subtasks_state(self, parent_id: int) -> ParentSubtaskCounts:
         async with self._engine.begin() as conn:
-            row = (await conn.execute(stmt)).one()
-        return int(row[0] or 0), int(row[1] or 0)
+            return await self._load_parent_subtask_counts(conn, parent_id, lock=False)
+
+    async def _load_parent_subtask_counts(
+        self,
+        conn: Any,
+        parent_id: int,
+        *,
+        lock: bool,
+    ) -> ParentSubtaskCounts:
+        tasks = self._core.tasks
+        stmt = select(tasks.c.status, tasks.c.is_block).where(
+            and_(
+                tasks.c.parent_id == parent_id,
+                tasks.c.deleted_at.is_(None),
+            )
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        rows = (await conn.execute(stmt)).all()
+        return self._classify_parent_children(rows)
+
+    @staticmethod
+    def _parent_status_for_successful_root(counts: ParentSubtaskCounts) -> TaskStatus:
+        """Status for a root whose own pipeline succeeded.
+
+        A blocking child that already failed wins over ``WAITING``: otherwise the
+        failure is forgotten when the parent later closes as ``FINISHED``.
+        """
+        if counts.failed_blocking > 0:
+            return TaskStatus.FAILED
+        if counts.pending_open > 0:
+            return TaskStatus.WAITING
+        if counts.failed_non_blocking > 0:
+            return TaskStatus.FINISHED_WITH_ERROR
+        return TaskStatus.FINISHED
+
+    @staticmethod
+    def _classify_parent_children(rows: Sequence[Any]) -> ParentSubtaskCounts:
+        pending_open = 0
+        failed_non_blocking = 0
+        failed_blocking = 0
+        for row in rows:
+            status = str(row[0])
+            is_block = bool(row[1])
+            if status not in _TERMINAL_SUBTASK_STATUSES:
+                pending_open += 1
+            elif status in _FAILED_SUBTASK_STATUSES and is_block:
+                failed_blocking += 1
+            elif status in _FAILED_SUBTASK_STATUSES:
+                failed_non_blocking += 1
+        return ParentSubtaskCounts(
+            pending_open=pending_open,
+            failed_non_blocking=failed_non_blocking,
+            failed_blocking=failed_blocking,
+        )
 
     async def close_waiting_parent(
         self, parent_id: int, status: WaitingParentCloseStatus
@@ -368,21 +426,25 @@ class PostgresTaskStorage(NativeTaskStorage):
         return updated is not None
 
     async def cancel_open_subtasks(self, parent_id: int) -> None:
-        tasks = self._core.tasks
         async with self._engine.begin() as conn:
-            await conn.execute(
-                update(tasks)
-                .where(
-                    and_(
-                        tasks.c.parent_id == parent_id,
-                        tasks.c.status.in_(tuple(_OPEN_SUBTASK_STATUSES)),
-                    )
-                )
-                .values(
-                    status=TaskStatus.CANCELLED.value,
-                    updated_at=func.now(),
+            await self._cancel_open_subtasks(conn, parent_id)
+
+    async def _cancel_open_subtasks(self, conn: Any, parent_id: int) -> None:
+        tasks = self._core.tasks
+        await conn.execute(
+            update(tasks)
+            .where(
+                and_(
+                    tasks.c.parent_id == parent_id,
+                    tasks.c.deleted_at.is_(None),
+                    tasks.c.status.in_(tuple(_OPEN_SUBTASK_STATUSES)),
                 )
             )
+            .values(
+                status=TaskStatus.CANCELLED.value,
+                updated_at=func.now(),
+            )
+        )
 
 
 class PostgresTaskRepository(TaskRepository):
@@ -407,11 +469,17 @@ class PostgresTaskRepository(TaskRepository):
         steps_names: list[str] | None = None
         if task.parent_id is None and task.steps_names and task.steps_names != [""]:
             steps_names = task.steps_names
-        await self._storage.set_task_running(
+        started = await self._storage.set_task_running(
             task.task_id,
             alias=task.alias,
             steps_names=steps_names,
         )
+        if not started:
+            logger.info(
+                "Task %s stayed put: status is no longer QUEUED (cancel won)",
+                task.task_id,
+            )
+            raise PipelineCancelledError(f"Task {task.task_id} cancelled before start")
 
     async def persist_task_result(self, task: TaskState) -> None:
         status = TaskStatus.FINISHED if task.result.ok else TaskStatus.FAILED
@@ -451,15 +519,7 @@ class PostgresTaskRepository(TaskRepository):
         status, current_executions, next_run_at = get_params_for_cyclical_task(
             status, task
         )
-        if task.parent_id is None and status == TaskStatus.FINISHED:
-            (
-                pending_open,
-                failed_non_blocking,
-            ) = await self._storage.count_parent_subtasks_state(task.task_id)
-            if pending_open > 0:
-                status = TaskStatus.WAITING
-            elif failed_non_blocking > 0:
-                status = TaskStatus.FINISHED_WITH_ERROR
+        rollup_parent = task.parent_id is None and status == TaskStatus.FINISHED
 
         if (
             task.type_task == TaskType.CYCLICAL
@@ -485,6 +545,7 @@ class PostgresTaskRepository(TaskRepository):
             current_executions=current_executions,
             next_run_at=next_run_at,
             payload_json=payload_json,
+            rollup_parent=rollup_parent,
         )
         if not updated:
             logger.warning(
@@ -507,10 +568,13 @@ class PostgresTaskRepository(TaskRepository):
             await self._storage.fail_waiting_parent(subtask.parent_id)
             await self._storage.cancel_open_subtasks(subtask.parent_id)
             return
-        pending, failed = await self._storage.count_parent_subtasks_state(
-            subtask.parent_id
-        )
-        if pending == 0 and failed > 0:
+        counts = await self._storage.count_parent_subtasks_state(subtask.parent_id)
+        if counts.pending_open > 0:
+            return
+        if counts.failed_blocking > 0:
+            await self._storage.fail_waiting_parent(subtask.parent_id)
+            return
+        if counts.failed_non_blocking > 0:
             await self._storage.close_waiting_parent(
                 subtask.parent_id,
                 TaskStatus.FINISHED_WITH_ERROR,
@@ -519,15 +583,15 @@ class PostgresTaskRepository(TaskRepository):
     async def _handle_subtask_finished(self, subtask: TaskState) -> None:
         if subtask.parent_id is None:
             return
-        (
-            pending_open,
-            failed_non_blocking,
-        ) = await self._storage.count_parent_subtasks_state(subtask.parent_id)
-        if pending_open > 0:
+        counts = await self._storage.count_parent_subtasks_state(subtask.parent_id)
+        if counts.pending_open > 0:
+            return
+        if counts.failed_blocking > 0:
+            await self._storage.fail_waiting_parent(subtask.parent_id)
             return
         parent_status: WaitingParentCloseStatus = (
             TaskStatus.FINISHED_WITH_ERROR
-            if failed_non_blocking > 0
+            if counts.failed_non_blocking > 0
             else TaskStatus.FINISHED
         )
         await self._storage.close_waiting_parent(subtask.parent_id, parent_status)

@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from scenario_pipeliner.api.settings import ScenarioPipelinerConfig
 from scenario_pipeliner.db.schema_utils import run_with_identity_sequence_retry
 from scenario_pipeliner.db.settings import CoreDb
+from scenario_pipeliner.db.tables import DEFAULT_INTERVAL_SECONDS
 from scenario_pipeliner.worker.core.enums import TaskSource, TaskStatus, TaskType
 from scenario_pipeliner.worker.core.settings import RunnerDBSettings
 from scenario_pipeliner.worker.core.states import TaskPayload
@@ -24,7 +25,7 @@ from scenario_pipeliner.worker.runtime.factories import (
 class TaskSeed:
     scenario: str
     type_task: TaskType = TaskType.LINEAR
-    interval_seconds: int = 1
+    interval_seconds: int = DEFAULT_INTERVAL_SECONDS
     max_executions: int | None = None
     alias: str | None = None
     steps_names: tuple[str, ...] = ()
@@ -35,7 +36,7 @@ class TaskSeed:
 @dataclass(frozen=True, slots=True)
 class CyclicalTaskSeed:
     scenario: str
-    interval_seconds: int = 1
+    interval_seconds: int = DEFAULT_INTERVAL_SECONDS
     max_executions: int | None = 3
     alias: str | None = None
     steps_names: tuple[str, ...] = ()

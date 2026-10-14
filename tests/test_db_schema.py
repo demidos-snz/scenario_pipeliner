@@ -234,13 +234,16 @@ def test_search_path_sql_uses_validated_identifier() -> None:
 def test_sqlalchemy_and_asyncpg_share_core_search_path(
     core_db: CoreDb, postgres_urls: PostgresUrls
 ) -> None:
-    async def _check() -> tuple[str, str, int, int]:
+    async def _check() -> tuple[str, str, int, int, str, str]:
         async with core_db.engine.connect() as conn:
             engine_schema = (
                 await conn.execute(text("SELECT current_schema()"))
             ).scalar_one()
             engine_count = (
                 await conn.execute(text("SELECT count(*) FROM settings"))
+            ).scalar_one()
+            engine_timeout = (
+                await conn.execute(text("SHOW statement_timeout"))
             ).scalar_one()
         pool = await create_asyncpg_pool_for_schema(
             postgres_urls.dsn,
@@ -252,6 +255,7 @@ def test_sqlalchemy_and_asyncpg_share_core_search_path(
             async with pool.acquire() as connection:
                 pool_schema = await connection.fetchval("SELECT current_schema()")
                 pool_count = await connection.fetchval("SELECT count(*) FROM settings")
+                pool_timeout = await connection.fetchval("SHOW statement_timeout")
         finally:
             await pool.close()
         return (
@@ -259,16 +263,27 @@ def test_sqlalchemy_and_asyncpg_share_core_search_path(
             str(pool_schema),
             int(engine_count or 0),
             int(pool_count or 0),
+            str(engine_timeout),
+            str(pool_timeout),
         )
 
-    engine_schema, pool_schema, engine_count, pool_count = asyncio.run(_check())
+    (
+        engine_schema,
+        pool_schema,
+        engine_count,
+        pool_count,
+        engine_timeout,
+        pool_timeout,
+    ) = asyncio.run(_check())
     assert engine_schema == core_db.core.schema_name
     assert pool_schema == core_db.core.schema_name
     assert engine_count >= 1
     assert pool_count == engine_count
+    assert engine_timeout == pool_timeout
+    assert engine_timeout in {"1min", "60s", "60000ms"}
 
 
-def test_core_migrate_is_single_revision(core_db: CoreDb) -> None:
+def test_core_migrate_head_revision(core_db: CoreDb) -> None:
     async def _version_and_tables() -> tuple[str, set[str]]:
         async with core_db.engine.connect() as conn:
             version = (
@@ -289,7 +304,7 @@ def test_core_migrate_is_single_revision(core_db: CoreDb) -> None:
         return str(version), tables
 
     version, tables = asyncio.run(_version_and_tables())
-    assert version == "0001_core_tables"
+    assert version == "0002_outbox_claim_token"
     assert {
         "tasks",
         "settings",

@@ -26,6 +26,8 @@ from scenario_pipeliner.db.enums import (
 from scenario_pipeliner.db.schemes_names import validate_schema_name
 from scenario_pipeliner.db.settings import CoreSchema
 
+DEFAULT_INTERVAL_SECONDS = 1
+
 
 def _schema_enum(schema: str, name: str, values: tuple[str, ...]) -> ENUM:
     return ENUM(
@@ -78,7 +80,12 @@ def build_core_schema(schema: str) -> CoreSchema:
             nullable=False,
             server_default=text(f"'{TaskType.LINEAR.value}'"),
         ),
-        Column("interval_seconds", Integer, nullable=False, server_default=text("1")),
+        Column(
+            "interval_seconds",
+            Integer,
+            nullable=False,
+            server_default=text(str(DEFAULT_INTERVAL_SECONDS)),
+        ),
         Column("max_executions", Integer, nullable=True),
         Column("current_executions", Integer, nullable=False, server_default=text("0")),
         Column("next_run_at", DateTime(timezone=True), nullable=True),
@@ -211,6 +218,7 @@ def build_core_schema(schema: str) -> CoreSchema:
         ),
         Column("headers", JSONB, nullable=True),
         Column("attempt_count", Integer, nullable=False, server_default=text("0")),
+        Column("claim_token", BigInteger, nullable=False, server_default=text("0")),
         Column("last_error", String, nullable=True),
         Column(
             "created_at",

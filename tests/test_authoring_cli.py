@@ -10,6 +10,7 @@ from typing import Any
 
 from scenario_pipeliner.core.checksum import sha256_directory
 from scenario_pipeliner.core.plugin_checksum import write_checksum_to_manifest
+from scenario_pipeliner.core.plugin_init import DEFAULT_CORE_COMPAT
 from scenario_pipeliner.db.settings import CoreDb
 from scenario_pipeliner.worker.core.enums import TaskStatus, TaskType
 from scenario_pipeliner.worker.runtime.runner_helpers import TaskSeed, create_task
@@ -40,7 +41,7 @@ def test_cli_plugin_init_scaffolds_and_checksum(tmp_path: Path) -> None:
         (plugin_dir / "plugin.manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["entrypoint"] == "demo_ping.plugin:register"
-    assert manifest["core_compat"] == ">=0.0.1,<1.0"
+    assert manifest["core_compat"] == DEFAULT_CORE_COMPAT
     assert manifest["checksum"]["value"] == sha256_directory(plugin_dir)
     assert "migrations" in manifest
 

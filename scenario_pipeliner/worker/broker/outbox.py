@@ -105,6 +105,7 @@ async def publish_pending_outbox(
         outbox_id = int(row["outbox_id"])
         task_id = int(row["task_id"])
         ingress_id = int(row["ingress_id"])
+        claim_token = int(row["claim_token"])
         try:
             task, result, ingress = await load_task_result_ingress(
                 db, task_id=task_id, ingress_id=ingress_id
@@ -112,7 +113,13 @@ async def publish_pending_outbox(
             hooks = hooks_by_plugin.get(ingress.plugin_name)
             settings = settings_by_plugin.get(ingress.plugin_name)
             if hooks is None or settings is None:
-                await mark_outbox_skipped(db, outbox_id=outbox_id)
+                if not await mark_outbox_skipped(
+                    db, outbox_id=outbox_id, claim_token=claim_token
+                ):
+                    _log_outbox_lease_lost(
+                        outbox_id=outbox_id, task_id=task_id, claim_token=claim_token
+                    )
+                    continue
                 logger.warning(
                     "outbox skip: no hooks/settings for plugin=%s task_id=%s",
                     ingress.plugin_name,
@@ -128,7 +135,14 @@ async def publish_pending_outbox(
             if body is None:
                 draft = await hooks.on_egress(task, result, ingress)
                 if draft is None:
-                    await mark_outbox_skipped(db, outbox_id=outbox_id)
+                    if not await mark_outbox_skipped(
+                        db, outbox_id=outbox_id, claim_token=claim_token
+                    ):
+                        _log_outbox_lease_lost(
+                            outbox_id=outbox_id,
+                            task_id=task_id,
+                            claim_token=claim_token,
+                        )
                     continue
                 routing_queues = _resolve_routing_queues(
                     draft=draft,
@@ -136,19 +150,33 @@ async def publish_pending_outbox(
                     plugin_output_queues=list(settings.output_queues),
                 )
                 if not routing_queues:
-                    await mark_outbox_skipped(db, outbox_id=outbox_id)
+                    if not await mark_outbox_skipped(
+                        db, outbox_id=outbox_id, claim_token=claim_token
+                    ):
+                        _log_outbox_lease_lost(
+                            outbox_id=outbox_id,
+                            task_id=task_id,
+                            claim_token=claim_token,
+                        )
+                        continue
                     logger.warning(
                         "outbox skip: empty routing task_id=%s plugin=%s",
                         task_id,
                         ingress.plugin_name,
                     )
                     continue
-                await store_outbox_reply(
+                stored = await store_outbox_reply(
                     db,
                     outbox_id=outbox_id,
+                    claim_token=claim_token,
                     draft=draft,
                     routing_queues=routing_queues,
                 )
+                if not stored:
+                    _log_outbox_lease_lost(
+                        outbox_id=outbox_id, task_id=task_id, claim_token=claim_token
+                    )
+                    continue
                 body = draft.body
                 content_type = draft.content_type
                 headers = _normalize_headers(draft.headers)
@@ -167,16 +195,34 @@ async def publish_pending_outbox(
                 body=bytes(body),
                 headers=publish_headers,
             )
-            await mark_outbox_sent(db, outbox_id=outbox_id)
-            sent += 1
+            if await mark_outbox_sent(db, outbox_id=outbox_id, claim_token=claim_token):
+                sent += 1
+            else:
+                _log_outbox_lease_lost(
+                    outbox_id=outbox_id, task_id=task_id, claim_token=claim_token
+                )
         except Exception as exc:
             logger.exception(
                 "outbox publish failed outbox_id=%s task_id=%s", outbox_id, task_id
             )
-            await mark_outbox_publish_failure(
+            recorded = await mark_outbox_publish_failure(
                 db,
                 outbox_id=outbox_id,
+                claim_token=claim_token,
                 error=str(exc),
                 max_attempts=max_attempts,
             )
+            if not recorded:
+                _log_outbox_lease_lost(
+                    outbox_id=outbox_id, task_id=task_id, claim_token=claim_token
+                )
     return sent
+
+
+def _log_outbox_lease_lost(*, outbox_id: int, task_id: int, claim_token: int) -> None:
+    logger.warning(
+        "outbox lease lost outbox_id=%s task_id=%s claim_token=%s",
+        outbox_id,
+        task_id,
+        claim_token,
+    )

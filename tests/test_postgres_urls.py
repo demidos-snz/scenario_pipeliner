@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -12,6 +14,8 @@ from scenario_pipeliner.db.engine import (
 )
 from scenario_pipeliner.db.exceptions import InvalidSchemaNameError
 from scenario_pipeliner.db.settings import (
+    DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
     PostgresPoolSettings,
     check_pool_bounds,
     sqlalchemy_pool_params,
@@ -161,7 +165,12 @@ def test_postgresql_client_settings_url_and_fallback() -> None:
 
 def test_postgres_pool_settings_shared_and_mapped_to_sqlalchemy() -> None:
     settings = PostgresPoolSettings(DB_POOL_MIN_SIZE=2, DB_POOL_MAX_SIZE=5)
-    assert settings.pool_kwargs == {"min_size": 2, "max_size": 5}
+    assert settings.pool_kwargs == {
+        "min_size": 2,
+        "max_size": 5,
+        "connect_timeout": DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
+        "command_timeout": DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
+    }
 
     with pytest.raises(ValidationError):
         PostgresPoolSettings(DB_POOL_MIN_SIZE=5, DB_POOL_MAX_SIZE=2)
@@ -177,7 +186,12 @@ def test_postgres_pool_settings_shared_and_mapped_to_sqlalchemy() -> None:
         DB_POOL_MIN_SIZE=2,
         DB_POOL_MAX_SIZE=6,
     )
-    assert client.pool_kwargs == {"min_size": 2, "max_size": 6}
+    assert client.pool_kwargs == {
+        "min_size": 2,
+        "max_size": 6,
+        "connect_timeout": DEFAULT_DB_CONNECT_TIMEOUT_SECONDS,
+        "command_timeout": DEFAULT_DB_COMMAND_TIMEOUT_SECONDS,
+    }
 
     engine = create_async_engine_for_schema(
         "postgresql+asyncpg://u:p@localhost/db",
@@ -189,3 +203,39 @@ def test_postgres_pool_settings_shared_and_mapped_to_sqlalchemy() -> None:
         assert engine.sync_engine.pool is not None
     finally:
         engine.sync_engine.dispose()
+
+
+def test_async_engine_bounds_postgres_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Engine:
+        class sync_engine:  # noqa: N801
+            pass
+
+    def fake_create(url: str, **kwargs: Any) -> _Engine:
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return _Engine()
+
+    monkeypatch.setattr(
+        "scenario_pipeliner.db.engine.create_async_engine",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "scenario_pipeliner.db.engine._attach_search_path",
+        lambda *_args, **_kwargs: None,
+    )
+    create_async_engine_for_schema(
+        "postgresql+asyncpg://u:p@localhost/db",
+        "sp",
+        connect_timeout=4,
+        command_timeout=9,
+    )
+    kwargs = captured["kwargs"]
+    assert kwargs["pool_pre_ping"] is True
+    assert kwargs["pool_timeout"] == 9
+    assert kwargs["connect_args"]["timeout"] == 4
+    assert kwargs["connect_args"]["command_timeout"] == 9
+    assert kwargs["connect_args"]["server_settings"]["statement_timeout"] == "9000"

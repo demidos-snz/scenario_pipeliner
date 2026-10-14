@@ -13,7 +13,7 @@ async def _sleep(seconds: float) -> None:
 
 
 def test_batch_runner_completes_without_stop() -> None:
-    runner = ExecutionBatchRunner(shutdown_timeout_seconds=0.05)
+    runner = ExecutionBatchRunner(shutdown_timeout_seconds=1)
     finished: list[int] = []
     timeout_calls = {"count": 0}
 
@@ -40,7 +40,7 @@ def test_batch_runner_completes_without_stop() -> None:
 
 
 def test_batch_runner_ignores_timeout_until_stop() -> None:
-    runner = ExecutionBatchRunner(shutdown_timeout_seconds=0.02)
+    runner = ExecutionBatchRunner(shutdown_timeout_seconds=1)
     timeout_calls = {"count": 0}
 
     async def on_timeout() -> None:
@@ -57,7 +57,7 @@ def test_batch_runner_ignores_timeout_until_stop() -> None:
 
 
 def test_batch_runner_stop_then_timeout_cancels() -> None:
-    runner = ExecutionBatchRunner(shutdown_timeout_seconds=0.02)
+    runner = ExecutionBatchRunner(shutdown_timeout_seconds=1)
     timeout_calls = {"count": 0}
     stop = asyncio.Event()
 
@@ -72,7 +72,7 @@ def test_batch_runner_stop_then_timeout_cancels() -> None:
         stopper = asyncio.create_task(fire_stop())
         try:
             await runner.run_with_shutdown_timeout(
-                (_sleep(1.0),),
+                (_sleep(5),),
                 on_timeout=on_timeout,
                 stop_event=stop,
             )
@@ -86,7 +86,7 @@ def test_batch_runner_stop_then_timeout_cancels() -> None:
 
 
 def test_batch_runner_stop_allows_tasks_to_finish() -> None:
-    runner = ExecutionBatchRunner(shutdown_timeout_seconds=0.5)
+    runner = ExecutionBatchRunner(shutdown_timeout_seconds=1)
     timeout_calls = {"count": 0}
     finished = {"ok": False}
     stop = asyncio.Event()

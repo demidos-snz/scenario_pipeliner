@@ -30,6 +30,7 @@ from scenario_pipeliner.env_loader import load_environment_file
 from scenario_pipeliner.version import __version__
 from scenario_pipeliner.worker.core.custom_settings import PostgreSQLClientSettings
 from scenario_pipeliner.worker.runtime import RunnerApp
+from scenario_pipeliner.worker.runtime.runner_helpers import DEFAULT_INTERVAL_SECONDS
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -192,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser.add_argument(
         "--interval-seconds",
         type=int,
-        default=1,
+        default=DEFAULT_INTERVAL_SECONDS,
         help="Stored on the row; used when type is CYCLICAL",
     )
     create_parser.add_argument(

@@ -17,7 +17,10 @@ from scenario_pipeliner.worker.core.enums import (
     TaskType,
     as_waiting_parent_close_status,
 )
-from scenario_pipeliner.worker.core.exceptions import DatabaseError
+from scenario_pipeliner.worker.core.exceptions import (
+    DatabaseError,
+    PipelineCancelledError,
+)
 from scenario_pipeliner.worker.core.settings import RunnerDBSettings
 from scenario_pipeliner.worker.core.states import TaskPayload, TaskState
 from scenario_pipeliner.worker.runtime.runner_helpers import ensure_worker_settings
@@ -208,7 +211,7 @@ def test_postgres_repository_fetch_batch_maps_rows(core_db: CoreDb) -> None:
 
 
 def test_postgres_repository_marks_running_and_alias(core_db: CoreDb) -> None:
-    task_id = _insert_task(core_db)
+    task_id = _insert_task(core_db, status=TaskStatus.QUEUED.value)
     repository = _repository(core_db)
     task = TaskState(task_id=task_id, scenario="scenario9", alias="worker")
 
@@ -220,7 +223,7 @@ def test_postgres_repository_marks_running_and_alias(core_db: CoreDb) -> None:
 
 
 def test_postgres_repository_marks_running_and_steps_names(core_db: CoreDb) -> None:
-    task_id = _insert_task(core_db)
+    task_id = _insert_task(core_db, status=TaskStatus.QUEUED.value)
     repository = _repository(core_db)
     task = TaskState(
         task_id=task_id,
@@ -240,7 +243,12 @@ def test_postgres_repository_marks_running_and_steps_names(core_db: CoreDb) -> N
 
 def test_postgres_repository_skips_steps_names_for_subtasks(core_db: CoreDb) -> None:
     parent_id = _insert_task(core_db)
-    task_id = _insert_task(core_db, parent_id=parent_id, steps_names=["kept"])
+    task_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        status=TaskStatus.QUEUED.value,
+        steps_names=["kept"],
+    )
     repository = _repository(core_db)
     task = TaskState(
         task_id=task_id,
@@ -254,6 +262,23 @@ def test_postgres_repository_skips_steps_names_for_subtasks(core_db: CoreDb) -> 
     row = _fetch_task(core_db, task_id)
     assert row["status"] == TaskStatus.RUNNING.value
     assert list(row["steps_names"]) == ["kept"]
+
+
+def test_mark_running_does_not_resurrect_cancelled(core_db: CoreDb) -> None:
+    task_id = _insert_task(
+        core_db,
+        status=TaskStatus.CANCELLED.value,
+        alias="kept",
+    )
+    repository = _repository(core_db)
+    task = TaskState(task_id=task_id, scenario="scenario9", alias="worker")
+
+    with pytest.raises(PipelineCancelledError, match="cancelled before start"):
+        asyncio.run(repository.mark_task_running(task))
+
+    row = _fetch_task(core_db, task_id)
+    assert row["status"] == TaskStatus.CANCELLED.value
+    assert row["alias"] == "kept"
 
 
 def test_postgres_repository_persists_cyclical_retry(core_db: CoreDb) -> None:
@@ -275,7 +300,7 @@ def test_postgres_repository_persists_cyclical_retry(core_db: CoreDb) -> None:
         current_executions=0,
         payload=TaskPayload(type_doc=EnumDoc.JSON, data=["{}"]),
     )
-    task.result.ok = False
+    task.result.ok = True
 
     asyncio.run(repository.persist_task_result(task))
 
@@ -285,7 +310,7 @@ def test_postgres_repository_persists_cyclical_retry(core_db: CoreDb) -> None:
     assert row["next_run_at"] is not None
 
 
-def test_postgres_repository_persists_cyclical_success_as_finished(
+def test_postgres_repository_persists_cyclical_failure_as_failed(
     core_db: CoreDb,
 ) -> None:
     task_id = _insert_task(
@@ -306,13 +331,14 @@ def test_postgres_repository_persists_cyclical_success_as_finished(
         current_executions=2,
         payload=TaskPayload(type_doc=EnumDoc.JSON, data=['{"cursor":1}']),
     )
-    task.result.ok = True
+    task.result.ok = False
 
     asyncio.run(repository.persist_task_result(task))
 
     row = _fetch_task(core_db, task_id)
-    assert row["status"] == TaskStatus.FINISHED.value
+    assert row["status"] == TaskStatus.FAILED.value
     assert row["current_executions"] == 3
+    assert row["next_run_at"] is None
 
 
 def test_count_parent_subtasks_state(core_db: CoreDb) -> None:
@@ -329,12 +355,19 @@ def test_count_parent_subtasks_state(core_db: CoreDb) -> None:
         is_block=False,
         status=TaskStatus.FAILED.value,
     )
+    _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.FAILED.value,
+    )
     storage = PostgresTaskStorage(engine=core_db.engine, core=core_db.core)
 
-    pending, failed = asyncio.run(storage.count_parent_subtasks_state(parent_id))
+    counts = asyncio.run(storage.count_parent_subtasks_state(parent_id))
 
-    assert pending == 1
-    assert failed == 1
+    assert counts.pending_open == 1
+    assert counts.failed_non_blocking == 1
+    assert counts.failed_blocking == 1
 
 
 def test_postgres_repository_persists_cyclical_success_at_max_executions(
@@ -572,6 +605,72 @@ def test_cancel_open_subtasks_includes_running(core_db: CoreDb) -> None:
     assert _fetch_task(core_db, finished_id)["status"] == TaskStatus.FINISHED.value
 
 
+def test_soft_deleted_children_do_not_hold_parent(core_db: CoreDb) -> None:
+    parent_id = _insert_task(core_db, status=TaskStatus.RUNNING.value)
+    deleted_open_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.RUNNING.value,
+    )
+    deleted_failed_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.FAILED.value,
+    )
+
+    async def _soft_delete() -> None:
+        async with core_db.engine.begin() as conn:
+            await conn.execute(
+                update(core_db.core.tasks)
+                .where(
+                    core_db.core.tasks.c.id.in_((deleted_open_id, deleted_failed_id))
+                )
+                .values(deleted_at=func.now())
+            )
+
+    asyncio.run(_soft_delete())
+    storage = PostgresTaskStorage(engine=core_db.engine, core=core_db.core)
+    counts = asyncio.run(storage.count_parent_subtasks_state(parent_id))
+    assert counts.pending_open == 0
+    assert counts.failed_blocking == 0
+    assert counts.failed_non_blocking == 0
+
+    repository = _repository(core_db)
+    parent = TaskState(task_id=parent_id, scenario="scenario9")
+    parent.result.ok = True
+    asyncio.run(repository.persist_task_result(parent))
+
+    assert _fetch_task(core_db, parent_id)["status"] == TaskStatus.FINISHED.value
+    assert _fetch_task(core_db, deleted_open_id)["status"] == TaskStatus.RUNNING.value
+    assert _fetch_task(core_db, deleted_failed_id)["status"] == TaskStatus.FAILED.value
+
+
+def test_cancel_open_subtasks_skips_soft_deleted(core_db: CoreDb) -> None:
+    parent_id = _insert_task(core_db, status=TaskStatus.FAILED.value)
+    live_id = _insert_task(core_db, parent_id=parent_id, status=TaskStatus.NEW.value)
+    deleted_id = _insert_task(
+        core_db, parent_id=parent_id, status=TaskStatus.RUNNING.value
+    )
+
+    async def _soft_delete() -> None:
+        async with core_db.engine.begin() as conn:
+            await conn.execute(
+                update(core_db.core.tasks)
+                .where(core_db.core.tasks.c.id == deleted_id)
+                .values(deleted_at=func.now())
+            )
+
+    asyncio.run(_soft_delete())
+    storage = PostgresTaskStorage(engine=core_db.engine, core=core_db.core)
+    asyncio.run(storage.cancel_open_subtasks(parent_id))
+
+    assert _fetch_task(core_db, live_id)["status"] == TaskStatus.CANCELLED.value
+    assert _fetch_task(core_db, deleted_id)["status"] == TaskStatus.RUNNING.value
+    assert _fetch_task(core_db, deleted_id)["deleted_at"] is not None
+
+
 def test_worker_disabled_skips_lock(core_db: CoreDb) -> None:
     asyncio.run(ensure_worker_settings(db=core_db, scenario="scenario9"))
     _set_setting(core_db, "worker_enabled", "0")
@@ -652,6 +751,78 @@ def test_blocking_failure_does_not_fail_running_parent(core_db: CoreDb) -> None:
     )
     assert _fetch_task(core_db, parent_id)["status"] == TaskStatus.RUNNING.value
     assert _fetch_task(core_db, failed_id)["status"] == TaskStatus.FAILED.value
+
+
+def test_root_success_fails_when_blocking_child_failed_before_waiting(
+    core_db: CoreDb,
+) -> None:
+    parent_id = _insert_task(core_db, status=TaskStatus.RUNNING.value)
+    failed_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.FAILED.value,
+    )
+    sibling_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.NEW.value,
+    )
+    repository = _repository(core_db)
+    parent = TaskState(task_id=parent_id, scenario="scenario9")
+    parent.result.ok = True
+
+    asyncio.run(repository.persist_task_result(parent))
+
+    assert _fetch_task(core_db, parent_id)["status"] == TaskStatus.FAILED.value
+    assert _fetch_task(core_db, failed_id)["status"] == TaskStatus.FAILED.value
+    assert _fetch_task(core_db, sibling_id)["status"] == TaskStatus.CANCELLED.value
+    assert _count_results(core_db, parent_id) == 1
+
+
+def test_root_success_waits_for_open_blocking_child(core_db: CoreDb) -> None:
+    parent_id = _insert_task(core_db, status=TaskStatus.RUNNING.value)
+    child_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.RUNNING.value,
+    )
+    repository = _repository(core_db)
+    parent = TaskState(task_id=parent_id, scenario="scenario9")
+    parent.result.ok = True
+
+    asyncio.run(repository.persist_task_result(parent))
+
+    assert _fetch_task(core_db, parent_id)["status"] == TaskStatus.WAITING.value
+    assert _fetch_task(core_db, child_id)["status"] == TaskStatus.RUNNING.value
+
+
+def test_last_success_fails_waiting_parent_when_blocking_sibling_failed(
+    core_db: CoreDb,
+) -> None:
+    parent_id = _insert_task(core_db, status=TaskStatus.WAITING.value)
+    _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.FAILED.value,
+    )
+    sibling_id = _insert_task(
+        core_db,
+        parent_id=parent_id,
+        is_block=True,
+        status=TaskStatus.RUNNING.value,
+    )
+    repository = _repository(core_db)
+
+    _persist_subtask(
+        repository, task_id=sibling_id, parent_id=parent_id, is_block=True, ok=True
+    )
+
+    assert _fetch_task(core_db, parent_id)["status"] == TaskStatus.FAILED.value
+    assert _fetch_task(core_db, sibling_id)["status"] == TaskStatus.FINISHED.value
 
 
 def test_parent_waits_for_non_blocking_children(core_db: CoreDb) -> None:

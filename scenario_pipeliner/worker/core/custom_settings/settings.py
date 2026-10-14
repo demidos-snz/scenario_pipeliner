@@ -10,11 +10,19 @@ from scenario_pipeliner.db.schemes_names import DEFAULT_DB_SCHEMA, validate_sche
 from scenario_pipeliner.db.settings import PostgresPoolSettings, PostgresUrls
 from scenario_pipeliner.worker.core.settings import ClientSettings
 
+DEFAULT_API_TIMEOUT = 30
+DEFAULT_RABBITMQ_CONNECT_TIMEOUT_SECONDS = 10
+DEFAULT_RABBITMQ_PING_TIMEOUT_SECONDS = 5
+DEFAULT_SQLITE_PING_TIMEOUT_SECONDS = 5
+
 
 class SQLiteClientSettings(ClientSettings):
     """Settings for the unused SQLite client skeleton."""
 
     DB_PATH: str = ""
+    SQLITE_PING_TIMEOUT_SECONDS: int = Field(
+        default=DEFAULT_SQLITE_PING_TIMEOUT_SECONDS, ge=1, le=60
+    )
 
     @property
     def async_url(self) -> str:
@@ -29,7 +37,7 @@ class APIClientSettings(ClientSettings):
     """HTTP client settings (base URL, timeout, optional OAuth2 password flow)."""
 
     API_BASE_URL: str = ""
-    API_TIMEOUT: int = Field(default=30, ge=1, le=300)
+    API_TIMEOUT: int = Field(default=DEFAULT_API_TIMEOUT, ge=1, le=300)
 
     # Static token: when set, login is not called.
     API_TOKEN: str | None = None
@@ -49,6 +57,12 @@ class RabbitMQSettings(ClientSettings):
 
     RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
     RABBITMQ_VHOST: str = "/"
+    RABBITMQ_CONNECT_TIMEOUT_SECONDS: int = Field(
+        default=DEFAULT_RABBITMQ_CONNECT_TIMEOUT_SECONDS, ge=1, le=120
+    )
+    RABBITMQ_PING_TIMEOUT_SECONDS: int = Field(
+        default=DEFAULT_RABBITMQ_PING_TIMEOUT_SECONDS, ge=1, le=60
+    )
 
 
 class KafkaSettings(ClientSettings):
